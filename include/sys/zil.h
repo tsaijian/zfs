@@ -162,7 +162,10 @@ typedef enum zil_create {
 #define	TX_MKDIR_ATTR		18	/* mkdir with attr */
 #define	TX_MKDIR_ACL_ATTR	19	/* mkdir with ACL + attrs */
 #define	TX_WRITE2		20	/* dmu_sync EALREADY write */
-#define	TX_MAX_TYPE		21	/* Max transaction type */
+/* TX_SETSAXATTR goes here but is not backported */
+#define	TX_RENAME_EXCHANGE	22	/* Atomic swap via renameat2 */
+#define	TX_RENAME_WHITEOUT	23	/* Atomic whiteout via renameat2 */
+#define	TX_MAX_TYPE		24	/* Max transaction type */
 
 /*
  * The transactions for mkdir, symlink, remove, rmdir, link, and rename

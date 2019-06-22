@@ -128,6 +128,14 @@ zil_prt_rec_rename(zilog_t *zilog, int txtype, const void *arg)
 	(void) printf("%ssdoid %llu, tdoid %llu\n", tab_prefix,
 	    (u_longlong_t)lr->lr_sdoid, (u_longlong_t)lr->lr_tdoid);
 	(void) printf("%ssrc %s tgt %s\n", tab_prefix, snm, tnm);
+	switch (txtype) {
+	case TX_RENAME_EXCHANGE:
+		(void) printf("%sflags RENAME_EXCHANGE\n", tab_prefix);
+		break;
+	case TX_RENAME_WHITEOUT:
+		(void) printf("%sflags RENAME_WHITEOUT\n", tab_prefix);
+		break;
+	}
 }
 
 /* ARGSUSED */
@@ -305,6 +313,9 @@ static zil_rec_info_t zil_rec_info[TX_MAX_TYPE] = {
 	{.zri_print = zil_prt_rec_create,   .zri_name = "TX_MKDIR_ATTR      "},
 	{.zri_print = zil_prt_rec_create,   .zri_name = "TX_MKDIR_ACL_ATTR  "},
 	{.zri_print = zil_prt_rec_write,    .zri_name = "TX_WRITE2          "},
+	{.zri_print = NULL,		    .zri_name = "TX_SETSAXATTR      "},
+	{.zri_print = zil_prt_rec_rename,   .zri_name = "TX_RENAME_EXCHANGE "},
+	{.zri_print = zil_prt_rec_rename,   .zri_name = "TX_RENAME_WHITEOUT "},
 };
 
 /* ARGSUSED */
@@ -329,7 +340,14 @@ print_log_record(zilog_t *zilog, const lr_t *lr, void *arg, uint64_t claim_txg)
 
 	if (txtype && verbose >= 3) {
 		if (!zilog->zl_os->os_encrypted) {
-			zil_rec_info[txtype].zri_print(zilog, txtype, lr);
+			zil_prt_rec_func_t print_func =
+			    zil_rec_info[txtype].zri_print;
+			if (print_func != NULL) {
+				print_func(zilog, txtype, lr);
+			} else {
+				(void) printf("%s(%s)\n", tab_prefix,
+				    zil_rec_info[txtype].zri_name);
+			}
 		} else {
 			(void) printf("%s(encrypted)\n", tab_prefix);
 		}
