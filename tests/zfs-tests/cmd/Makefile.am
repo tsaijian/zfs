@@ -25,6 +25,7 @@ SUBDIRS = \
 	randwritecomp \
 	readmmap \
 	rename_dir \
+	renameat2 \
 	rm_lnkcnt_zero_file \
 	send_doall \
 	stride_dd \
