@@ -59,6 +59,7 @@
 #include <sys/spa_boot.h>
 #include <sys/objlist.h>
 #include <sys/zpl.h>
+#include <sys/zpl_xattr.h>
 #include <linux/vfs_compat.h>
 #include "zfs_comutil.h"
 
@@ -352,7 +353,6 @@ acltype_changed_cb(void *arg, uint64_t newval)
 	zfsvfs_t *zfsvfs = arg;
 
 	switch (newval) {
-	case ZFS_ACLTYPE_NFSV4:
 	case ZFS_ACLTYPE_OFF:
 		zfsvfs->z_acl_type = ZFS_ACLTYPE_OFF;
 		zfsvfs->z_sb->s_flags &= ~SB_POSIXACL;
@@ -365,6 +365,10 @@ acltype_changed_cb(void *arg, uint64_t newval)
 		zfsvfs->z_acl_type = ZFS_ACLTYPE_OFF;
 		zfsvfs->z_sb->s_flags &= ~SB_POSIXACL;
 #endif /* CONFIG_FS_POSIX_ACL */
+		break;
+	case ZFS_ACLTYPE_NFSV4:
+		zfsvfs->z_acl_type = ZFS_ACLTYPE_NFSV4;
+		zfsvfs->z_sb->s_flags &= ~SB_POSIXACL;
 		break;
 	default:
 		break;
@@ -2144,6 +2148,7 @@ zfs_init(void)
 	zfs_znode_init();
 	dmu_objset_register_type(DMU_OST_ZFS, zpl_get_file_info);
 	register_filesystem(&zpl_fs_type);
+	zpl_xattr_init();
 }
 
 void
@@ -2154,6 +2159,7 @@ zfs_fini(void)
 	 */
 	taskq_wait(system_delay_taskq);
 	taskq_wait(system_taskq);
+	zpl_xattr_fini();
 	unregister_filesystem(&zpl_fs_type);
 	zfs_znode_fini();
 	zfsctl_fini();
