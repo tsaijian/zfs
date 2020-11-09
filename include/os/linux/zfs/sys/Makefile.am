@@ -23,6 +23,7 @@ KERNEL_H = \
 	zfs_vfsops_os.h \
 	zfs_vnops.h \
 	zfs_znode_impl.h \
+	zpl_xattr.h \
 	zpl.h
 
 if CONFIG_KERNEL
