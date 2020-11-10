@@ -93,6 +93,8 @@ typedef struct xattr_filldir {
 } xattr_filldir_t;
 
 static const struct xattr_handler *zpl_xattr_handler(const char *);
+int zpl_xattr_init(void);
+void zpl_xattr_fini(void);
 
 static int
 zpl_xattr_permission(xattr_filldir_t *xf, const char *name, int name_len)
