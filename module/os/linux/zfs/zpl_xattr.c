@@ -1368,7 +1368,8 @@ zpl_permission(struct inode *ip, int mask)
 				ACE_FILE_INHERIT_ACE| \
 				ACE_NO_PROPAGATE_INHERIT_ACE| \
 				ACE_INHERIT_ONLY_ACE| \
-				ACE_INHERITED_ACE)
+				ACE_INHERITED_ACE| \
+				ACE_IDENTIFIER_GROUP)
 
 static int
 __zpl_xattr_nfs4acl_list(struct inode *ip, char *list, size_t list_size,
