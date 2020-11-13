@@ -84,6 +84,8 @@
 #include <sys/zap.h>
 #include <sys/vfs.h>
 #include <sys/zpl.h>
+#include <rpc/xdr.h>
+#include <sys/nfs41acl.h>
 
 typedef struct xattr_filldir {
 	size_t size;
@@ -1360,16 +1362,21 @@ zpl_permission(struct inode *ip, int mask)
 }
 
 #define	NFS4ACL_XATTR		"system.nfs4_acl"
+#define	NFS41ACL_XATTR		"system.nfs4_acl_xdr"
 #define	NFS4ACL_NAMESZ		128
+#define	NFS4ACL_MAX_ENTRIES	128
 #define	NFS4ACL_UINT_MAXLEN	11
 #define	NFS4ACL_XDR_MOD		4
-#define NFS4ACL_ACE_SIZE	((sizeof(u32) * 4) + (NFS4ACL_NAMESZ * sizeof(char)))
-#define NFS41_FLAGS		(ACE_DIRECTORY_INHERIT_ACE| \
+#define	NFS4ACL_ACE_SIZE	((sizeof(u32) * 4) + ((NFS4ACL_UINT_MAXLEN+1) * sizeof(char)))
+#define	NFS41_SZ		((sizeof(u32) * 2) + (NFS4ACL_MAX_ENTRIES * NFS4ACL_ACE_SIZE))
+#define	NFS41ACL_XATTR		"system.nfs4_acl_xdr"
+#define	NFS41_FLAGS		(ACE_DIRECTORY_INHERIT_ACE| \
 				ACE_FILE_INHERIT_ACE| \
 				ACE_NO_PROPAGATE_INHERIT_ACE| \
 				ACE_INHERIT_ONLY_ACE| \
 				ACE_INHERITED_ACE| \
 				ACE_IDENTIFIER_GROUP)
+
 
 static int
 __zpl_xattr_nfs4acl_list(struct inode *ip, char *list, size_t list_size,
@@ -1395,11 +1402,11 @@ __zpl_xattr_nfs4acl_get(struct inode *ip, const char *name,
 {
 
 	dprintf("Entered get\n");
-	cred_t *cr = CRED();
 	vsecattr_t vsecp;
-	char *bufp;
+	char *bufp = NULL;
+	cred_t *cr = CRED();
 	int i, ret;
-	char who_str[NFS4ACL_NAMESZ +7] = {0};
+	char who_str[NFS4ACL_UINT_MAXLEN + 1] = {0};
 
        /* xattr_resolve_name will do this for us if this is defined */
 #ifndef HAVE_XATTR_HANDLER_NAME
@@ -1411,28 +1418,14 @@ __zpl_xattr_nfs4acl_get(struct inode *ip, const char *name,
 		return (-EOPNOTSUPP);
 
        /* xattr_resolve_name will do this for us if this is defined */
-
 	if (size == 0) {
 		/*
-		 * API user may send NULL buffer so that we
+		 * API user may send 0 size so that we
 		 * return size of buffer needed for ACL. In
-		 * this case optimize with approximation.
+		 * this case optimize with max size, which is slightly.
+		 * less than 4096.
 		 */
-		dprintf("perparing to get size of buffer\n");
-		vsecp.vsa_mask = VSA_ACE_ALLTYPES|VSA_ACECNT;
-		crhold(cr);
-		ret = -zfs_getsecattr(ip, &vsecp, 0, cr);
-		crfree(cr);
-		if (ret)
-			return (ret);
-		if (vsecp.vsa_aclcnt == 0) {
-			ret = -ENODATA;
-			goto nfs4acl_get_out;
-		}
-		ret = sizeof (u32); /* ACL count */
-		ret += sizeof (u32); /* ACL flags */
-		ret += vsecp.vsa_aclcnt * NFS4ACL_ACE_SIZE;
-		goto nfs4acl_get_out;
+		return NFS41_SZ;
 	}
 	dprintf("Getting 'fo real'\n");
 	vsecp.vsa_mask = VSA_ACE_ALLTYPES | VSA_ACECNT | VSA_ACE |
@@ -1669,6 +1662,240 @@ nfs4acl_set_out:
 }
 ZPL_XATTR_SET_WRAPPER(zpl_xattr_nfs4acl_set);
 
+static int
+__zpl_xattr_nfs41acl_list(struct inode *ip, char *list, size_t list_size,
+    const char *name, size_t name_len)
+{
+	dprintf("In nfs4acl_list\n");
+	char *xattr_name = NFS41ACL_XATTR;
+	size_t xattr_size = sizeof (NFS41ACL_XATTR);
+
+	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4)
+		return (0);
+
+	if (list && xattr_size <= list_size)
+		memcpy(list, xattr_name, xattr_size);
+
+	return (xattr_size);
+}
+ZPL_XATTR_LIST_WRAPPER(zpl_xattr_nfs41acl_list);
+
+static boolean_t
+zfsacl_to_nfsacl41i(vsecattr_t vsecp, nfsacl41i **_nacl, size_t *_acl_size)
+{
+	nfsacl41i *nacl = NULL;
+	int i;
+	size_t acl_size = sizeof(nfsacl41i) + (vsecp.vsa_aclcnt * sizeof(struct nfsace4i));
+	nacl = kmem_alloc(acl_size, KM_SLEEP);
+
+	nacl->na41_aces.na41_aces_len = vsecp.vsa_aclcnt;
+	nacl->na41_flag = vsecp.vsa_aclflags;
+	nacl->na41_aces.na41_aces_val = (nfsace4i *)((char *)nacl + sizeof(nfsacl41i));
+	for (i = 0; i < vsecp.vsa_aclcnt; i++) {
+		nfsace4i *nacep = &nacl->na41_aces.na41_aces_val[i];
+		ace_t *acep = vsecp.vsa_aclentp + (i * sizeof (ace_t));
+		nacep->type = acep->a_type;
+		nacep->flag = acep->a_flags & NFS41_FLAGS;
+		nacep->access_mask = acep->a_access_mask;
+		switch (acep->a_flags & ACE_TYPE_FLAGS) {
+		case ACE_OWNER:
+			nacep->iflag |= ACEI4_SPECIAL_WHO;
+			nacep->who = ACE4_SPECIAL_OWNER;
+			break;
+
+		case ACE_GROUP|ACE_IDENTIFIER_GROUP:
+			nacep->iflag |= ACEI4_SPECIAL_WHO;
+			nacep->who = ACE4_SPECIAL_GROUP;
+			break;
+
+		case ACE_EVERYONE:
+			nacep->iflag |= ACEI4_SPECIAL_WHO;
+			nacep->who = ACE4_SPECIAL_EVERYONE;
+			break;
+
+		case ACE_IDENTIFIER_GROUP:
+		case 0:
+			nacep->who = acep->a_who;
+			break;
+
+		default:
+			dprintf("Unknown ACE_TYPE_FLAG 0x%08x\n",
+				acep->a_flags & ACE_TYPE_FLAGS);
+			kmem_free(nacl, acl_size);
+			return B_FALSE;
+		}
+	}
+	*_acl_size = acl_size;
+	*_nacl = nacl;
+	return B_TRUE;
+}
+
+static boolean_t
+nfsacl41i_to_zfsacl(nfsacl41i *nacl, vsecattr_t *_vsecp)
+{
+	int i;
+	vsecattr_t vsecp;
+	vsecp.vsa_aclcnt = nacl->na41_aces.na41_aces_len;
+	vsecp.vsa_aclflags = nacl->na41_flag;
+	vsecp.vsa_aclentsz = vsecp.vsa_aclcnt * sizeof (ace_t);
+	vsecp.vsa_aclentp = kmem_alloc(vsecp.vsa_aclentsz, KM_SLEEP);
+	vsecp.vsa_mask = VSA_ACE;
+
+	for (i = 0; i < vsecp.vsa_aclcnt; i++) {
+		ace_t *acep = vsecp.vsa_aclentp + (i * sizeof (ace_t));
+		nfsace4i *nacep = &nacl->na41_aces.na41_aces_val[i];
+		acep->a_type = nacep->type;
+		acep->a_flags = nacep->flag & NFS41_FLAGS;
+		acep->a_access_mask = nacep->access_mask;
+		if (nacep->iflag & ACEI4_SPECIAL_WHO) {
+			switch(nacep->who) {
+			case ACE4_SPECIAL_OWNER:
+				acep->a_flags |= ACE_OWNER;
+				acep->a_who = -1;
+				break;
+
+			case ACE4_SPECIAL_GROUP:
+				acep->a_flags |= ACE_GROUP;
+				acep->a_who = -1;
+				break;
+
+			case ACE4_SPECIAL_EVERYONE:
+				acep->a_flags |= ACE_EVERYONE;
+				acep->a_who = -1;
+				break;
+
+			default:
+				dprintf("Unknown id 0x%08x\n", nacep->who);
+				kmem_free(vsecp.vsa_aclentp, vsecp.vsa_aclentsz);
+				return B_FALSE;
+			}
+		}
+		else {
+			acep->a_who = nacep->who;
+		}
+	}
+	*_vsecp = vsecp;
+	return B_TRUE;
+}
+
+static int
+__zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
+    void *buffer, size_t size)
+{
+
+	dprintf("Entered get\n");
+	vsecattr_t vsecp;
+	cred_t *cr = CRED();
+	int ret;
+	size_t acl_size;
+	XDR xdr = {0};
+	boolean_t ok;
+	nfsacl41i *nacl = NULL;
+
+       /* xattr_resolve_name will do this for us if this is defined */
+#ifndef HAVE_XATTR_HANDLER_NAME
+       if (strcmp(name, "") != 0)
+               return (-EINVAL);
+#endif
+
+	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4)
+		return (-EOPNOTSUPP);
+
+	if (size == 0) {
+		/*
+		 * API user may send 0 size so that we
+		 * return size of buffer needed for ACL. In
+		 * this case optimize with max size, which is slightly.
+		 * less than 4096.
+		 */
+		return NFS41_SZ;
+	}
+	dprintf("Getting 'fo real'\n");
+	vsecp.vsa_mask = VSA_ACE_ALLTYPES | VSA_ACECNT | VSA_ACE |
+	    VSA_ACE_ACLFLAGS;
+
+	crhold(cr);
+	ret = -zfs_getsecattr(ip, &vsecp, 0, cr);
+	crfree(cr);
+
+	if (ret)
+		return (ret);
+
+	if (vsecp.vsa_aclcnt == 0) {
+		ret = -ENODATA;
+		goto nfs4acl_get_out;
+	}
+	ok = zfsacl_to_nfsacl41i(vsecp, &nacl, &acl_size);
+	if (!ok) {
+		ret = -ENOMEM;
+		goto nfs4acl_get_out;
+	}
+
+	xdrmem_create(&xdr, (char *)buffer, size, XDR_ENCODE);
+	ok = xdr_nfsacl41i(&xdr, nacl);
+	if (!ok) {
+		ret = -ENOMEM;
+		kmem_free(nacl, acl_size);
+		goto nfs4acl_get_out;
+	}
+	kmem_free(nacl, acl_size);
+
+nfs4acl_get_out:
+	kmem_free(vsecp.vsa_aclentp, vsecp.vsa_aclentsz);
+
+	return (ret);
+}
+ZPL_XATTR_GET_WRAPPER(zpl_xattr_nfs41acl_get);
+
+static int
+__zpl_xattr_nfs41acl_set(struct inode *ip, const char *name,
+    const void *value, size_t size, int flags)
+{
+	cred_t *cr = CRED();
+	vsecattr_t vsecp;
+	char *bufp = NULL;
+	nfsacl41i *nacl = NULL;
+	boolean_t ok;
+	XDR xdr = {0};
+	size_t acl_size;
+	int ret = 0;
+	int naces = ((size - sizeof(aclflag4) - sizeof(unsigned)) / sizeof(struct nfsace4i));
+
+	dprintf("entered set\n");
+
+	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4)
+		return (-EOPNOTSUPP);
+
+	if (!naces) {
+		dprintf("ACL entry contains no aces!\n");
+		return (-EINVAL);
+	}
+	bufp = (char *)value;
+	acl_size = sizeof(nfsacl41i) + (naces * sizeof(struct nfsace4i));
+	nacl = kmem_alloc(acl_size, KM_SLEEP);
+
+	xdrmem_create(&xdr, bufp, size, XDR_DECODE);
+	ok = xdr_nfsacl41i(&xdr, nacl);
+	if (!ok) {
+		kmem_free(nacl, acl_size);
+		return (-ENOMEM);
+	}
+	ok = nfsacl41i_to_zfsacl(nacl, &vsecp);
+	if (!ok) {
+		kmem_free(nacl, acl_size);
+		return (-EINVAL);
+	}
+	kmem_free(nacl, acl_size);
+
+	crhold(cr);
+	ret = -zfs_setsecattr(ITOZ(ip), &vsecp, 0, cr);
+	crfree(cr);
+
+	kmem_free(vsecp.vsa_aclentp, vsecp.vsa_aclentsz);
+	return (ret);
+}
+ZPL_XATTR_SET_WRAPPER(zpl_xattr_nfs41acl_set);
+
 /*
  * ACL access xattr namespace handlers.
  *
@@ -1687,6 +1914,17 @@ xattr_handler_t zpl_xattr_nfs4acl_handler =
 	.set	= zpl_xattr_nfs4acl_set,
 };
 
+xattr_handler_t zpl_xattr_nfs41acl_handler =
+{
+#ifdef HAVE_XATTR_HANDLER_NAME
+	.name	= NFS41ACL_XATTR,
+#else
+	.prefix	= NFS41ACL_XATTR,
+#endif
+	.list	= zpl_xattr_nfs41acl_list,
+	.get	= zpl_xattr_nfs41acl_get,
+	.set	= zpl_xattr_nfs41acl_set,
+};
 
 xattr_handler_t *zpl_xattr_handlers[] = {
 	&zpl_xattr_security_handler,
@@ -1697,6 +1935,7 @@ xattr_handler_t *zpl_xattr_handlers[] = {
 	&zpl_xattr_acl_default_handler,
 #endif /* CONFIG_FS_POSIX_ACL */
 	&zpl_xattr_nfs4acl_handler,
+	&zpl_xattr_nfs41acl_handler,
 	NULL
 };
 
@@ -1728,6 +1967,10 @@ zpl_xattr_handler(const char *name)
 	if (strncmp(name, NFS4ACL_XATTR,
 	    sizeof (NFS4ACL_XATTR)) == 0)
 		return (&zpl_xattr_nfs4acl_handler);
+
+	if (strncmp(name, NFS41ACL_XATTR,
+	    sizeof (NFS41ACL_XATTR)) == 0)
+		return (&zpl_xattr_nfs41acl_handler);
 
 	return (NULL);
 }
