@@ -3052,6 +3052,7 @@ dbuf_issue_final_prefetch(dbuf_prefetch_arg_t *dpa, blkptr_t *bp)
 	ASSERT3U(dpa->dpa_curlevel, ==, BP_GET_LEVEL(bp));
 	ASSERT3U(dpa->dpa_curlevel, ==, dpa->dpa_zb.zb_level);
 	ASSERT(dpa->dpa_zio != NULL);
+	aflags |= ARC_FLAG_CALLBACK_ONLY;
 	(void) arc_read(dpa->dpa_zio, dpa->dpa_spa, bp,
 	    dbuf_issue_final_prefetch_done, dpa,
 	    dpa->dpa_prio, zio_flags, &aflags, &dpa->dpa_zb);
