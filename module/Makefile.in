@@ -115,7 +115,7 @@ modules_uninstall-FreeBSD:
 modules_uninstall: modules_uninstall-@ac_system@
 
 distdir:
-	(cd @srcdir@ && find $(ZFS_MODULES) os -name '*.[chS]') | \
+	(cd @srcdir@ && find $(ZFS_MODULES) os -name '*.[chxS]') | \
 	while read path; do \
 		mkdir -p $$distdir/$${path%/*}; \
 		cp @srcdir@/$$path $$distdir/$$path; \
