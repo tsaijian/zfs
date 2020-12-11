@@ -85,7 +85,7 @@
 #include <sys/vfs.h>
 #include <sys/zpl.h>
 #include <rpc/xdr.h>
-#include <sys/nfs41acl.h>
+#include "nfs41acl.h"
 
 typedef struct xattr_filldir {
 	size_t size;
