@@ -823,6 +823,7 @@ dbuf_fetch_buf_ctxs(dmu_buf_impl_t *db, list_t *list)
 	if (list_is_empty(&db->db_buf_ctxs))
 		return (B_FALSE);
 
+	VERIFY0(db->db_state & DB_READ);
 	list_create(list, sizeof (dmu_buf_ctx_node_t),
 	    offsetof(dmu_buf_ctx_node_t, dbsn_link));
 
@@ -3976,7 +3977,7 @@ static void
 dbuf_fill_done(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
 	dbuf_dirty_record_t *dr;
-	boolean_t process;
+	boolean_t process = B_FALSE;
 	list_t ctx_list;
 
 	mutex_enter(&db->db_mtx);
@@ -4020,7 +4021,8 @@ dbuf_fill_done(dmu_buf_impl_t *db, dmu_tx_t *tx)
 		}
 		cv_broadcast(&db->db_changed);
 	}
-	process = dbuf_fetch_buf_ctxs(db, &ctx_list);
+	if ((db->db_state & DB_READ) == 0)
+		process = dbuf_fetch_buf_ctxs(db, &ctx_list);
 	mutex_exit(&db->db_mtx);
 	if (process)
 		dbuf_process_buf_ctxs(&ctx_list, /* err */ 0);
