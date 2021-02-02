@@ -2281,7 +2281,7 @@ dbuf_unoverride(dbuf_dirty_record_t *dr)
  * ensure that the state of any dirty records affected by the operation
  * remain consistent.
  */
-static void
+static int
 dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
     dmu_tx_t *tx)
 {
@@ -2289,6 +2289,16 @@ dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
 	dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
 
 	ASSERT(dr != NULL);
+
+	while (dr->dr_txg != txg && dr == db->db_data_pending) {
+		cv_wait(&db->db_changed, &db->db_mtx);
+
+		/*
+		 * If we're no longer referenced we're done here
+		 */
+		if ((dr = list_head(&db->db_dirty_records)) == NULL)
+			return (1);
+	}
 
 	if (dr->dr_txg == txg) {
 		/*
@@ -2312,7 +2322,7 @@ dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
 			 * group's dirty record before we change the dbuf's
 			 * state and lose track of the PARTIAL state.
 			 */
-				dbuf_transition_to_read(db);
+			dbuf_transition_to_read(db);
 		}
 		/* Disassociate the frontend if necessary. */
 		if (dr->dt.dl.dr_data == db->db_buf) {
@@ -2360,6 +2370,7 @@ dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
 			}
 		}
 	}
+	return (0);
 }
 
 
@@ -2458,6 +2469,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 
 		/* found a level 0 buffer in the range */
 		mutex_enter(&db->db_mtx);
+	restart:
 		if (dbuf_undirty(db, tx)) {
 			/* mutex has been dropped and dbuf destroyed */
 			continue;
@@ -2476,7 +2488,8 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 			 * current transaction group all zeros, while preserving
 			 * the data as seen in any earlier transaction groups.
 			 */
-			dbuf_free_range_disassociate_frontend(db, dn, tx);
+			if (dbuf_free_range_disassociate_frontend(db, dn, tx))
+				goto restart;
 		}
 		if (db->db_buf == NULL) {
 			ASSERT(db->db_state == DB_READ);
@@ -3567,6 +3580,7 @@ static void
 dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
 {
 	dmu_buf_impl_t *db = dr->dr_dbuf;
+	boolean_t do_wakeup;
 
 	if (dr->dt.dl.dr_data != db->db.db_data) {
 		struct dnode *dn = DB_DNODE(db);
@@ -3575,10 +3589,11 @@ dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
 		kmem_free(dr->dt.dl.dr_data, max_bonuslen);
 		arc_space_return(max_bonuslen, ARC_SPACE_BONUS);
 	}
+	do_wakeup = (dr == db->db_data_pending);
 	db->db_data_pending = NULL;
 	ASSERT(list_next(&db->db_dirty_records, dr) == NULL);
 	list_remove(&db->db_dirty_records, dr);
-	if (dr->dr_dbuf->db_level != 0) {
+	if (db->db_level != 0) {
 		mutex_destroy(&dr->dt.di.dr_mtx);
 		list_destroy(&dr->dt.di.dr_children);
 	} else {
@@ -3588,6 +3603,8 @@ dbuf_undirty_bonus(dbuf_dirty_record_t *dr)
 	kmem_free(dr, sizeof (dbuf_dirty_record_t));
 	ASSERT3U(db->db_dirtycnt, >, 0);
 	db->db_dirtycnt -= 1;
+	if (do_wakeup)
+		cv_broadcast(&db->db_changed);
 }
 
 static void
