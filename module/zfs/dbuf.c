@@ -2287,8 +2287,15 @@ dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
 {
 	uint64_t txg = tx->tx_txg;
 	dbuf_dirty_record_t *dr = list_head(&db->db_dirty_records);
+	boolean_t need_drop_ref = B_FALSE;
 
 	ASSERT(dr != NULL);
+
+	if (dr->dr_txg != txg && dr == db->db_data_pending) {
+		dbuf_add_ref(db, FTAG);
+		mutex_exit(&dn->dn_dbufs_mtx);
+		need_drop_ref = B_TRUE;
+	}
 
 	while (dr->dr_txg != txg && dr == db->db_data_pending) {
 		cv_wait(&db->db_changed, &db->db_mtx);
@@ -2297,9 +2304,15 @@ dbuf_free_range_disassociate_frontend(dmu_buf_impl_t *db, dnode_t *dn,
 		 * If we're no longer referenced we're done here
 		 */
 		if ((dr = list_head(&db->db_dirty_records)) == NULL)
-			return (1);
+			break;
 	}
-
+	if (need_drop_ref) {
+		if (zfs_refcount_remove(&db->db_holds, FTAG) == 0)
+			dbuf_destroy(db);
+		else
+			mutex_exit(&db->db_mtx);
+		return (1);
+	}
 	if (dr->dr_txg == txg) {
 		/*
 		 * This buffer is "in-use", re-adjust the file
@@ -2452,6 +2465,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 	db_search->db_blkid = start_blkid;
 	db_search->db_state = DB_SEARCH;
 
+restart:
 	mutex_enter(&dn->dn_dbufs_mtx);
 	db = avl_find(&dn->dn_dbufs, db_search, &where);
 	ASSERT3P(db, ==, NULL);
@@ -2469,7 +2483,6 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 
 		/* found a level 0 buffer in the range */
 		mutex_enter(&db->db_mtx);
-	restart:
 		if (dbuf_undirty(db, tx)) {
 			/* mutex has been dropped and dbuf destroyed */
 			continue;
