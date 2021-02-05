@@ -293,11 +293,18 @@ zio_buf_alloc(size_t size)
 	size_t c = (size - 1) >> SPA_MINBLOCKSHIFT;
 
 	VERIFY3U(c, <, SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
+	void *ptr = kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE);
+
 #if defined(ZFS_DEBUG) && !defined(_KERNEL)
 	atomic_add_64(&zio_buf_cache_allocs[c], 1);
+
+	uint32_t *p;
+	int cnt = size >> 2;
+	for (p = ptr; cnt > 0; cnt--, p++)
+		*p = 0xDEADBEEF;
 #endif
 
-	return (kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE));
+	return (ptr);
 }
 
 /*
@@ -313,7 +320,15 @@ zio_data_buf_alloc(size_t size)
 
 	VERIFY3U(c, <, SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	return (kmem_cache_alloc(zio_data_buf_cache[c], KM_PUSHPAGE));
+	void *ptr = kmem_cache_alloc(zio_data_buf_cache[c], KM_PUSHPAGE);
+
+#if defined(ZFS_DEBUG) && !defined(_KERNEL)
+	uint32_t *p;
+	int cnt = size >> 2;
+	for (p = ptr; cnt > 0; cnt--, p++)
+		*p = 0xDEADBEEF;
+#endif
+	return (ptr);
 }
 
 void
