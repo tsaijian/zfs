@@ -1360,8 +1360,21 @@ zpl_permission(struct inode *ip, int mask)
 		 * MAY_APPEND|MAY_ACCESS|MAY_OPEN|MAY_CHDIR, do we care?
 		 * What about V_APPEND zfs_access flag?
 		 */
+#ifdef SB_NFSV4ACL
+		int to_check, flag;
+		if (mask & EXTENDED_ENTRIES) {
+			to_check = (mask & EXTENDED_ENTRIES) >> 1;
+			flag = V_ACE_MASK;
+		}
+		else {
+			to_check = (mask & MAY_READ|MAY_WRITE|MAY_EXEC) << 6;
+			flag = 0;
+		}
+		return (-zfs_access(ip, to_check, flag, CRED()));
+#else
 		return (-zfs_access(ip, (mask &
 		    (MAY_READ|MAY_WRITE|MAY_EXEC)) << 6, 0, CRED()));
+#endif
 	} else {
 		return (generic_permission(ip, mask));
 	}
