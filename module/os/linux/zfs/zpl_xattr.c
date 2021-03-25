@@ -1367,7 +1367,7 @@ zpl_permission(struct inode *ip, int mask)
 			flag = V_ACE_MASK;
 		}
 		else {
-			to_check = (mask & MAY_READ|MAY_WRITE|MAY_EXEC) << 6;
+			to_check = (mask & (MAY_READ|MAY_WRITE|MAY_EXEC)) << 6;
 			flag = 0;
 		}
 		return (-zfs_access(ip, to_check, flag, CRED()));
