@@ -1540,7 +1540,7 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 	    VSA_ACE_ACLFLAGS;
 
 	crhold(cr);
-	ret = -zfs_getsecattr(ITOZ(ip), &vsecp, 0, cr);
+	ret = -zfs_getsecattr(ITOZ(ip), &vsecp, capable(CAP_SYS_ADMIN)?ATTR_NOACLCHECK:0, cr);
 	crfree(cr);
 
 	if (ret)
