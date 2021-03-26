@@ -1540,7 +1540,7 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 	    VSA_ACE_ACLFLAGS;
 
 	crhold(cr);
-	fl = capable(CAP_SYS_ADMIN) ? ATTR_NOACLCHECK : 0;
+	fl = capable(CAP_DAC_OVERRIDE) ? ATTR_NOACLCHECK : 0;
 	ret = -zfs_getsecattr(ITOZ(ip), &vsecp, fl, cr);
 	crfree(cr);
 
@@ -1625,7 +1625,7 @@ __zpl_xattr_nfs41acl_set(struct inode *ip, const char *name,
 	kmem_free(nacl, acl_size);
 
 	crhold(cr);
-	fl = capable(CAP_SYS_ADMIN) ? ATTR_NOACLCHECK : 0;
+	fl = capable(CAP_DAC_OVERRIDE) ? ATTR_NOACLCHECK : 0;
 	ret = -zfs_setsecattr(ITOZ(ip), &vsecp, fl, cr);
 	crfree(cr);
 

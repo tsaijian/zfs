@@ -1925,16 +1925,16 @@ zfs_getattr_fast(struct inode *ip, struct kstat *sp)
 	 * hot code paths, make significant efforts to avoid having to
 	 * call zfs_zaccess() here.
 	 */
-	if ((zp->z_acl_type == ZFS_ACLTYPE_NFSV4) &&
+	if ((ZTOZSB(zp)->z_acl_type == ZFS_ACLTYPE_NFSV4) &&
 	    !(zp->z_pflags & ZFS_ACL_TRIVIAL) &&
-	    !credential(CAP_DAC_OVERRIDE)) {
+	    !capable(CAP_DAC_OVERRIDE)) {
 		int error;
 		cred_t *cr = CRED();
 		uid_t owner = zfs_fuid_map_id(ZTOZSB(zp),
 					      KUID_TO_SUID(ZTOI(zp)->i_uid),
 					      cr, ZFS_OWNER);
 		if ((owner != crgetuid(cr)) &&
-		    (error = zfs_zaccess(zp, ACE_READ_ATTRIBUTES, 0, 0, cr)) {
+		    (error = zfs_zaccess(zp, ACE_READ_ATTRIBUTES, 0, 0, cr))) {
 			mutex_exit(&zp->z_lock);
 			ZFS_EXIT(zfsvfs);
 			return (error);
