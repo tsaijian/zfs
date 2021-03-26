@@ -1362,8 +1362,8 @@ zpl_permission(struct inode *ip, int mask)
 		 */
 #ifdef SB_NFSV4ACL
 		int to_check, flag;
-		if (mask & EXTENDED_ENTRIES) {
-			to_check = (mask & EXTENDED_ENTRIES) >> 1;
+		if (mask & NFS41ACL_WRITE_ALL) {
+			to_check = (mask & NFS41ACL_WRITE_ALL) >> 1;
 			flag = V_ACE_MASK;
 		}
 		else {
