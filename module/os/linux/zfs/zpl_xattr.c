@@ -1510,7 +1510,7 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 {
 	vsecattr_t vsecp;
 	cred_t *cr = CRED();
-	int ret;
+	int ret, fl;
 	size_t acl_size;
 	XDR xdr = {0};
 	boolean_t ok;
@@ -1540,7 +1540,8 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 	    VSA_ACE_ACLFLAGS;
 
 	crhold(cr);
-	ret = -zfs_getsecattr(ITOZ(ip), &vsecp, capable(CAP_SYS_ADMIN)?ATTR_NOACLCHECK:0, cr);
+	fl = capable(CAP_SYS_ADMIN) ? ATTR_NOACLCHECK : 0;
+	ret = -zfs_getsecattr(ITOZ(ip), &vsecp, fl, cr);
 	crfree(cr);
 
 	if (ret)
@@ -1591,7 +1592,7 @@ __zpl_xattr_nfs41acl_set(struct inode *ip, const char *name,
 	boolean_t ok;
 	XDR xdr = {0};
 	size_t acl_size;
-	int ret = 0;
+	int ret, fl;
 	int naces = ((size - sizeof(aclflag4) - sizeof(unsigned)) / sizeof(struct nfsace4i));
 
 	dprintf("entered set\n");
@@ -1624,7 +1625,8 @@ __zpl_xattr_nfs41acl_set(struct inode *ip, const char *name,
 	kmem_free(nacl, acl_size);
 
 	crhold(cr);
-	ret = -zfs_setsecattr(ITOZ(ip), &vsecp, 0, cr);
+	fl = capable(CAP_SYS_ADMIN) ? ATTR_NOACLCHECK : 0;
+	ret = -zfs_setsecattr(ITOZ(ip), &vsecp, fl, cr);
 	crfree(cr);
 
 	kmem_free(vsecp.vsa_aclentp, vsecp.vsa_aclentsz);
