@@ -98,6 +98,25 @@ static const struct xattr_handler *zpl_xattr_handler(const char *);
 int zpl_xattr_init(void);
 void zpl_xattr_fini(void);
 
+static const struct {
+	int kmask;
+	int zfsperm;
+} mask2zfs[] = {
+	{ MAY_READ, ACE_READ_DATA },
+	{ MAY_WRITE, ACE_WRITE_DATA },
+	{ MAY_EXEC, ACE_EXECUTE },
+#ifdef SB_NFSV4ACL
+	{ MAY_DELETE, ACE_DELETE },
+	{ MAY_DELETE_CHILD, ACE_DELETE_CHILD },
+	{ MAY_WRITE_ATTRS, ACE_WRITE_ATTRIBUTES },
+	{ MAY_WRITE_NAMED_ATTRS, ACE_WRITE_NAMED_ATTRS },
+	{ MAY_WRITE_ACL, ACE_WRITE_ACL },
+	{ MAY_WRITE_OWNER, ACE_WRITE_OWNER },
+#endif
+};
+
+#define	GENERIC_MASK(mask) ((mask & ~(MAY_READ | MAY_WRITE | MAY_EXEC)) != 0)
+
 static int
 zpl_xattr_permission(xattr_filldir_t *xf, const char *name, int name_len)
 {
@@ -1354,30 +1373,83 @@ xattr_handler_t zpl_xattr_acl_default_handler =
 int
 zpl_permission(struct inode *ip, int mask)
 {
-	if (ITOZSB(ip)->z_acl_type == ZFS_ACLTYPE_NFSV4) {
-		/*
-		 * XXX - mask could also include
-		 * MAY_APPEND|MAY_ACCESS|MAY_OPEN|MAY_CHDIR, do we care?
-		 * What about V_APPEND zfs_access flag?
-		 */
-#ifdef SB_NFSV4ACL
-		int to_check, flag;
-		if (mask & NFS41ACL_WRITE_ALL) {
-			to_check = (mask & NFS41ACL_WRITE_ALL) >> 1;
-			flag = V_ACE_MASK;
-		}
-		else {
-			to_check = (mask & (MAY_READ|MAY_WRITE|MAY_EXEC)) << 6;
-			flag = 0;
-		}
-		return (-zfs_access(ip, to_check, flag, CRED()));
-#else
-		return (-zfs_access(ip, (mask &
-		    (MAY_READ|MAY_WRITE|MAY_EXEC)) << 6, 0, CRED()));
-#endif
-	} else {
+	int to_check = 0, flag, i, ret;
+	cred_t *cr = NULL;
+
+	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4) {
 		return (generic_permission(ip, mask));
 	}
+	/*
+	 * XXX - mask could also include
+	 * MAY_APPEND|MAY_ACCESS|MAY_OPEN|MAY_CHDIR, do we care?
+	 * What about V_APPEND zfs_access flag?
+	 */
+
+	/*
+	 * If an ACL is trivial, then it can be fully expressed
+	 * via POSIX permissions without loss of information.
+	 * Go back to generic_permission().
+	 */
+	if (ITOZ(ip)->z_pflags & ZFS_ACL_TRIVIAL) {
+		return (generic_permission(ip, mask));
+	}
+
+	/*
+	 *  Avoid potentially blocking in RCU walk.
+	 */
+	if (mask & MAY_NOT_BLOCK) {
+		return (-ECHILD);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(mask2zfs); i++) {
+		if (mask & mask2zfs[i].kmask) {
+			to_check |= mask2zfs[i].zfsperm;
+		}
+	}
+	flag = GENERIC_MASK(mask) ? 0 : V_ACE_MASK;
+
+	cr = CRED();
+	ret = -zfs_access(ip, to_check, flag, cr);
+	if (!((ret == -EPERM) || (ret == -EACCES))) {
+		return (ret);
+	}
+
+	/*
+	 * There are some situations in which capabilities
+	 * may allow overriding the DACL.
+	 */
+	if (S_ISDIR(ip->i_mode)) {
+#ifdef SB_NFSV4ACL
+		if (!(mask & (MAY_WRITE | NFS41ACL_WRITE_ALL))) {
+#else
+		if (!(mask & MAY_WRITE)) {
+#endif
+			if (capable(CAP_DAC_READ_SEARCH)) {
+				return (0);
+			}
+		}
+		if (capable(CAP_DAC_OVERRIDE)) {
+			return (0);
+		}
+		return (ret);
+	}
+
+	if (to_check == ACE_READ_DATA) {
+		if (capable(CAP_DAC_READ_SEARCH)) {
+			return (0);
+		}
+	}
+
+	/*
+	 * XXX: May need to have an additional check for any
+	 * execute in the ACL.
+	 */
+	if (!(mask & MAY_EXEC) || (inode->i_mode & S_IXUGO)) {
+		if (capable(CAP_DAC_OVERRIDE)) {
+			return (0);
+		}
+	}
+	return (ret);
 }
 
 #define	NFS41ACL_XATTR		"system.nfs4_acl_xdr"
