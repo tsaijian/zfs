@@ -1919,28 +1919,6 @@ zfs_getattr_fast(struct inode *ip, struct kstat *sp)
 
 	mutex_enter(&zp->z_lock);
 
-	/*
-	 * NFSv4 ACLs may allow or deny ability to stat() a file through
-	 * ACE_READ_ATTRIBUTES. Since this function will likely be in many
-	 * hot code paths, make significant efforts to avoid having to
-	 * call zfs_zaccess() here.
-	 */
-	if ((ZTOZSB(zp)->z_acl_type == ZFS_ACLTYPE_NFSV4) &&
-	    !(zp->z_pflags & ZFS_ACL_TRIVIAL) &&
-	    !capable(CAP_DAC_OVERRIDE)) {
-		int error;
-		cred_t *cr = CRED();
-		uid_t owner = zfs_fuid_map_id(ZTOZSB(zp),
-					      KUID_TO_SUID(ZTOI(zp)->i_uid),
-					      cr, ZFS_OWNER);
-		if ((owner != crgetuid(cr)) &&
-		    (error = zfs_zaccess(zp, ACE_READ_ATTRIBUTES, 0, 0, cr))) {
-			mutex_exit(&zp->z_lock);
-			ZFS_EXIT(zfsvfs);
-			return (error);
-		}
-	}
-
 	generic_fillattr(ip, sp);
 	/*
 	 * +1 link count for root inode with visible '.zfs' directory.

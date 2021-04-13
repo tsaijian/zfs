@@ -290,7 +290,7 @@ zpl_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 	 */
 	if (zfsvfs->z_acl_type == ZFS_ACLTYPE_NFSV4) {
 		error = zpl_xattr_filldir(&xf, NFS41ACL_XATTR,
-					  strlen(NFS41ACL_XATTR));
+		    strlen(NFS41ACL_XATTR));
 		if (error) {
 			goto out;
 		}
@@ -1474,6 +1474,9 @@ zpl_permission(struct inode *ip, int mask)
 				ACE_INHERITED_ACE| \
 				ACE_IDENTIFIER_GROUP)
 
+#define	NFS41ACL_SIZE(x)	(sizeof (nfsacl41i) + (x * sizeof (nfsace4i)))
+#define	NFS41SIZE_ACES(x)	((x - sizeof (nfsacl41i)) / sizeof (nfsace4i))
+
 static int
 __zpl_xattr_nfs41acl_list(struct inode *ip, char *list, size_t list_size,
     const char *name, size_t name_len)
@@ -1495,13 +1498,18 @@ static boolean_t
 zfsacl_to_nfsacl41i(vsecattr_t vsecp, nfsacl41i **_nacl, size_t *_acl_size)
 {
 	nfsacl41i *nacl = NULL;
+	nfsace4i *nacep = NULL;
 	int i;
-	size_t acl_size = sizeof(nfsacl41i) + (vsecp.vsa_aclcnt * sizeof(struct nfsace4i));
+	size_t acl_size;
+
+	acl_size = NFS41ACL_SIZE(vsecp.vsa_aclcnt);
 	nacl = kmem_alloc(acl_size, KM_SLEEP);
+	nacep = (nfsace4i *)((char *)nacl + sizeof (nfsacl41i));
 
 	nacl->na41_aces.na41_aces_len = vsecp.vsa_aclcnt;
 	nacl->na41_flag = vsecp.vsa_aclflags;
-	nacl->na41_aces.na41_aces_val = (nfsace4i *)((char *)nacl + sizeof(nfsacl41i));
+	nacl->na41_aces.na41_aces_val = nacep;
+
 	for (i = 0; i < vsecp.vsa_aclcnt; i++) {
 		nfsace4i *nacep = &nacl->na41_aces.na41_aces_val[i];
 		ace_t *acep = vsecp.vsa_aclentp + (i * sizeof (ace_t));
@@ -1531,14 +1539,14 @@ zfsacl_to_nfsacl41i(vsecattr_t vsecp, nfsacl41i **_nacl, size_t *_acl_size)
 
 		default:
 			dprintf("Unknown ACE_TYPE_FLAG 0x%08x\n",
-				acep->a_flags & ACE_TYPE_FLAGS);
+			    acep->a_flags & ACE_TYPE_FLAGS);
 			kmem_free(nacl, acl_size);
-			return B_FALSE;
+			return (B_FALSE);
 		}
 	}
 	*_acl_size = acl_size;
 	*_nacl = nacl;
-	return B_TRUE;
+	return (B_TRUE);
 }
 
 static boolean_t
@@ -1546,11 +1554,12 @@ nfsacl41i_to_zfsacl(nfsacl41i *nacl, vsecattr_t *_vsecp)
 {
 	int i;
 	vsecattr_t vsecp;
+
 	vsecp.vsa_aclcnt = nacl->na41_aces.na41_aces_len;
 	vsecp.vsa_aclflags = nacl->na41_flag;
 	vsecp.vsa_aclentsz = vsecp.vsa_aclcnt * sizeof (ace_t);
-	vsecp.vsa_aclentp = kmem_alloc(vsecp.vsa_aclentsz, KM_SLEEP);
 	vsecp.vsa_mask = (VSA_ACE | VSA_ACE_ACLFLAGS);
+	vsecp.vsa_aclentp = kmem_alloc(vsecp.vsa_aclentsz, KM_SLEEP);
 
 	for (i = 0; i < vsecp.vsa_aclcnt; i++) {
 		ace_t *acep = vsecp.vsa_aclentp + (i * sizeof (ace_t));
@@ -1559,7 +1568,7 @@ nfsacl41i_to_zfsacl(nfsacl41i *nacl, vsecattr_t *_vsecp)
 		acep->a_flags = nacep->flag & NFS41_FLAGS;
 		acep->a_access_mask = nacep->access_mask;
 		if (nacep->iflag & ACEI4_SPECIAL_WHO) {
-			switch(nacep->who) {
+			switch (nacep->who) {
 			case ACE4_SPECIAL_OWNER:
 				acep->a_flags |= ACE_OWNER;
 				acep->a_who = -1;
@@ -1577,16 +1586,16 @@ nfsacl41i_to_zfsacl(nfsacl41i *nacl, vsecattr_t *_vsecp)
 
 			default:
 				dprintf("Unknown id 0x%08x\n", nacep->who);
-				kmem_free(vsecp.vsa_aclentp, vsecp.vsa_aclentsz);
-				return B_FALSE;
+				kmem_free(vsecp.vsa_aclentp,
+				    vsecp.vsa_aclentsz);
+				return (B_FALSE);
 			}
-		}
-		else {
+		} else {
 			acep->a_who = nacep->who;
 		}
 	}
 	*_vsecp = vsecp;
-	return B_TRUE;
+	return (B_TRUE);
 }
 
 static int
@@ -1601,10 +1610,10 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 	boolean_t ok;
 	nfsacl41i *nacl = NULL;
 
-       /* xattr_resolve_name will do this for us if this is defined */
+	/* xattr_resolve_name will do this for us if this is defined */
 #ifndef HAVE_XATTR_HANDLER_NAME
-       if (strcmp(name, "") != 0)
-               return (-EINVAL);
+	if (strcmp(name, "") != 0)
+		return (-EINVAL);
 #endif
 
 	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4)
@@ -1619,15 +1628,13 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 		 */
 		crhold(cr);
 		vsecp.vsa_mask = VSA_ACECNT;
-		ret = -zfs_getsecattr(ITOZ(ip), &vsecp,
-				      ATTR_NOACLCHECK,
-				      cr);
+		ret = -zfs_getsecattr(ITOZ(ip), &vsecp, ATTR_NOACLCHECK, cr);
 		if (ret) {
-			return ret;
+			return (ret);
 		}
 		crfree(cr);
-		ret = sizeof(nfsacl41i) + (vsecp.vsa_aclcnt * sizeof(nfsace4i));
-		return ret;
+		ret = NFS41ACL_SIZE(vsecp.vsa_aclcnt);
+		return (ret);
 	}
 	vsecp.vsa_mask = VSA_ACE_ALLTYPES | VSA_ACECNT | VSA_ACE |
 	    VSA_ACE_ACLFLAGS;
@@ -1684,26 +1691,29 @@ __zpl_xattr_nfs41acl_set(struct inode *ip, const char *name,
 	nfsacl41i *nacl = NULL;
 	boolean_t ok;
 	XDR xdr = {0};
-	size_t acl_size, max_acl_size;
+	size_t acl_size;
 	int ret, fl, naces;
 
-	max_acl_size = (sizeof(nfsacl41i) +
-			(NFS41ACL_MAX_ACES * sizeof(nfsace4i)));
-
-	if (size > max_acl_size) {
+	if (size > NFS41ACL_SIZE(NFS41ACL_MAX_ACES)) {
 		return (-E2BIG);
 	}
 
 	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4)
 		return (-EOPNOTSUPP);
 
-	naces = ((size - sizeof(nfsacl41i)) / sizeof(nfsace4i));
+	naces = NFS41SIZE_ACES(size);
 	if (!naces) {
+		/*
+		 * TODO: removexattr() performs setxattr
+		 * with 0 size and NULL buffre. We may
+		 * wish to use this as an opportunity to
+		 * "strip" the ACL.
+		 */
 		dprintf("ACL entry contains no aces\n");
 		return (-EINVAL);
 	}
 	bufp = (char *)value;
-	acl_size = sizeof(nfsacl41i) + (naces * sizeof(struct nfsace4i));
+	acl_size = NFS41ACL_SIZE(naces);
 	nacl = kmem_alloc(acl_size, KM_SLEEP);
 
 	xdrmem_create(&xdr, bufp, acl_size, XDR_DECODE);
@@ -1794,7 +1804,7 @@ zpl_xattr_handler(const char *name)
 int
 zpl_xattr_init(void)
 {
-	struct cred *cred;
+	struct cred *cred = NULL;
 	cred = prepare_kernel_cred(NULL);
 
 	if (!cred)
@@ -1808,7 +1818,6 @@ zpl_xattr_init(void)
 void
 zpl_xattr_fini(void)
 {
-	return;
 }
 
 #if !defined(HAVE_POSIX_ACL_RELEASE) || defined(HAVE_POSIX_ACL_RELEASE_GPL_ONLY)
