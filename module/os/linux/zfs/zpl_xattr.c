@@ -87,6 +87,8 @@
 #include <rpc/xdr.h>
 #include "nfs41acl.h"
 
+#define	NFS41ACL_XATTR		"system.nfs4_acl_xdr"
+
 typedef struct xattr_filldir {
 	size_t size;
 	size_t offset;
@@ -282,7 +284,18 @@ zpl_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 	error = zpl_xattr_list_dir(&xf, cr);
 	if (error)
 		goto out;
-
+#if 0
+	/*
+	 * Add NFS4 ACL to xattr list
+	 */
+	if (zfsvfs->z_acl_type == ZFS_ACLTYPE_NFSV4) {
+		error = zpl_xattr_filldir(&xf, NFS41ACL_XATTR,
+					  strlen(NFS41ACL_XATTR));
+		if (error) {
+			goto out;
+		}
+	}
+#endif
 	error = xf.offset;
 out:
 
@@ -1444,15 +1457,15 @@ zpl_permission(struct inode *ip, int mask)
 	 * XXX: May need to have an additional check for any
 	 * execute in the ACL.
 	 */
-	if (!(mask & MAY_EXEC) || (inode->i_mode & S_IXUGO)) {
+	if (!(mask & MAY_EXEC) || (ip->i_mode & S_IXUGO)) {
 		if (capable(CAP_DAC_OVERRIDE)) {
 			return (0);
 		}
 	}
+
 	return (ret);
 }
 
-#define	NFS41ACL_XATTR		"system.nfs4_acl_xdr"
 #define	NFS41ACL_MAX_ACES	128
 #define	NFS41_FLAGS		(ACE_DIRECTORY_INHERIT_ACE| \
 				ACE_FILE_INHERIT_ACE| \
@@ -1537,7 +1550,7 @@ nfsacl41i_to_zfsacl(nfsacl41i *nacl, vsecattr_t *_vsecp)
 	vsecp.vsa_aclflags = nacl->na41_flag;
 	vsecp.vsa_aclentsz = vsecp.vsa_aclcnt * sizeof (ace_t);
 	vsecp.vsa_aclentp = kmem_alloc(vsecp.vsa_aclentsz, KM_SLEEP);
-	vsecp.vsa_mask = VSA_ACE;
+	vsecp.vsa_mask = (VSA_ACE | VSA_ACE_ACLFLAGS);
 
 	for (i = 0; i < vsecp.vsa_aclcnt; i++) {
 		ace_t *acep = vsecp.vsa_aclentp + (i * sizeof (ace_t));
@@ -1604,8 +1617,16 @@ __zpl_xattr_nfs41acl_get(struct inode *ip, const char *name,
 		 * this case optimize with max size, which is slightly.
 		 * less than 4096.
 		 */
-		ret = sizeof(nfsacl41i) + (NFS41ACL_MAX_ACES * sizeof(struct nfsace4i));
-		dprintf("RETURNING: %d\n", ret);
+		crhold(cr);
+		vsecp.vsa_mask = VSA_ACECNT;
+		ret = -zfs_getsecattr(ITOZ(ip), &vsecp,
+				      ATTR_NOACLCHECK,
+				      cr);
+		if (ret) {
+			return ret;
+		}
+		crfree(cr);
+		ret = sizeof(nfsacl41i) + (vsecp.vsa_aclcnt * sizeof(nfsace4i));
 		return ret;
 	}
 	vsecp.vsa_mask = VSA_ACE_ALLTYPES | VSA_ACECNT | VSA_ACE |
@@ -1663,27 +1684,29 @@ __zpl_xattr_nfs41acl_set(struct inode *ip, const char *name,
 	nfsacl41i *nacl = NULL;
 	boolean_t ok;
 	XDR xdr = {0};
-	size_t acl_size;
-	int ret, fl;
-	int naces = ((size - sizeof(aclflag4) - sizeof(unsigned)) / sizeof(struct nfsace4i));
+	size_t acl_size, max_acl_size;
+	int ret, fl, naces;
 
-	dprintf("entered set\n");
+	max_acl_size = (sizeof(nfsacl41i) +
+			(NFS41ACL_MAX_ACES * sizeof(nfsace4i)));
+
+	if (size > max_acl_size) {
+		return (-E2BIG);
+	}
 
 	if (ITOZSB(ip)->z_acl_type != ZFS_ACLTYPE_NFSV4)
 		return (-EOPNOTSUPP);
 
+	naces = ((size - sizeof(nfsacl41i)) / sizeof(nfsace4i));
 	if (!naces) {
-		dprintf("ACL entry contains no aces!\n");
+		dprintf("ACL entry contains no aces\n");
 		return (-EINVAL);
-	}
-	if (naces > NFS41ACL_MAX_ACES) {
-		return (-E2BIG);
 	}
 	bufp = (char *)value;
 	acl_size = sizeof(nfsacl41i) + (naces * sizeof(struct nfsace4i));
 	nacl = kmem_alloc(acl_size, KM_SLEEP);
 
-	xdrmem_create(&xdr, bufp, size, XDR_DECODE);
+	xdrmem_create(&xdr, bufp, acl_size, XDR_DECODE);
 	ok = xdr_nfsacl41i(&xdr, nacl);
 	if (!ok) {
 		kmem_free(nacl, acl_size);
