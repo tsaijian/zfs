@@ -1,5 +1,4 @@
 include $(top_srcdir)/config/Rules.am
-PHONY =
 
 VPATH = \
 	$(top_srcdir)/module/icp \
@@ -89,6 +88,8 @@ libzfs_la_LDFLAGS += -version-info 4:0:0
 if !ASAN_ENABLED
 libzfs_la_LDFLAGS += -Wl,-z,defs
 endif
+
+include $(top_srcdir)/config/CppCheck.am
 
 # Library ABI
 EXTRA_DIST = libzfs.abi libzfs.suppr
