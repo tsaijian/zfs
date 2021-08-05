@@ -868,7 +868,7 @@ dump_ioctl(zfs_handle_t *zhp, const char *fromsnap, uint64_t fromsnap_obj,
 static void
 gather_holds(zfs_handle_t *zhp, send_dump_data_t *sdd)
 {
-	assert(zhp->zfs_type == ZFS_TYPE_SNAPSHOT);
+	ASSERT3S(zhp->zfs_type, ==, ZFS_TYPE_SNAPSHOT);
 
 	/*
 	 * zfs_send() only sets snapholds for sends that need them,
