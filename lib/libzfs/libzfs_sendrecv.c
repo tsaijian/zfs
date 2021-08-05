@@ -729,9 +729,9 @@ zfs_send_space(zfs_handle_t *zhp, const char *snapname, const char *from,
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 	int error;
 
-	assert(snapname != NULL);
-	error = lzc_send_space(snapname, from, flags, spacep);
+	ASSERT3P(snapname, !=, NULL);
 
+	error = lzc_send_space(snapname, from, flags, spacep);
 	if (error != 0) {
 		char errbuf[1024];
 		(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN,
