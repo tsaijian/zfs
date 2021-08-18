@@ -1152,18 +1152,25 @@ dump_snapshot(zfs_handle_t *zhp, void *arg)
 	return (err);
 }
 
+/*
+ * Send all snapshots for a filesystem, updating the send dump data.
+ */
 static int
-dump_filesystem(zfs_handle_t *zhp, void *arg)
+dump_filesystem(zfs_handle_t *zhp, send_dump_data_t *sdd)
 {
 	int rv = 0;
-	send_dump_data_t *sdd = arg;
 	boolean_t missingfrom = B_FALSE;
 	zfs_cmd_t zc = {"\0"};
 	uint64_t min_txg = 0, max_txg = 0;
 
+	/*
+	 * Make sure the tosnap exists.
+	 * XXX: This seems like it would be redundant?
+	 */
 	(void) snprintf(zc.zc_name, sizeof (zc.zc_name), "%s@%s",
 	    zhp->zfs_name, sdd->tosnap);
 	if (zfs_ioctl(zhp->zfs_hdl, ZFS_IOC_OBJSET_STATS, &zc) != 0) {
+		/* XXX: printing to stderr instead of logging to zhp? */
 		(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
 		    "WARNING: could not send %s@%s: does not exist\n"),
 		    zhp->zfs_name, sdd->tosnap);
@@ -1171,28 +1178,29 @@ dump_filesystem(zfs_handle_t *zhp, void *arg)
 		return (0);
 	}
 
+	/*
+	 * If this fs does not have fromsnap, and we're doing
+	 * recursive, we need to send a full stream from the
+	 * beginning (or an incremental from the origin if this
+	 * is a clone).  If we're doing non-recursive, then let
+	 * them get the error.
+	 */
 	if (sdd->replicate && sdd->fromsnap) {
 		/*
-		 * If this fs does not have fromsnap, and we're doing
-		 * recursive, we need to send a full stream from the
-		 * beginning (or an incremental from the origin if this
-		 * is a clone).  If we're doing non-recursive, then let
-		 * them get the error.
+		 * Make sure the fromsnap exists.
+		 * XXX: This seems like it would be redundant?
 		 */
 		(void) snprintf(zc.zc_name, sizeof (zc.zc_name), "%s@%s",
 		    zhp->zfs_name, sdd->fromsnap);
-		if (zfs_ioctl(zhp->zfs_hdl,
-		    ZFS_IOC_OBJSET_STATS, &zc) != 0) {
+		if (zfs_ioctl(zhp->zfs_hdl, ZFS_IOC_OBJSET_STATS, &zc) != 0)
 			missingfrom = B_TRUE;
-		}
 	}
 
-	sdd->seenfrom = sdd->seento = sdd->prevsnap[0] = 0;
+	sdd->seenfrom = sdd->seento = B_FALSE;
+	sdd->prevsnap[0] = '\0';
 	sdd->prevsnap_obj = 0;
 	if (sdd->fromsnap == NULL || missingfrom)
 		sdd->seenfrom = B_TRUE;
-
-
 
 	/*
 	 * Iterate through all snapshots and process the ones we will be
@@ -1200,18 +1208,23 @@ dump_filesystem(zfs_handle_t *zhp, void *arg)
 	 * with, we can avoid iterating through all the other snapshots.
 	 */
 	if (sdd->doall || sdd->replicate || sdd->tosnap == NULL) {
-		if (!sdd->replicate && sdd->fromsnap != NULL)
-			min_txg = get_snap_txg(zhp->zfs_hdl, zhp->zfs_name,
-			    sdd->fromsnap);
-		if (!sdd->replicate && sdd->tosnap != NULL)
-			max_txg = get_snap_txg(zhp->zfs_hdl, zhp->zfs_name,
-			    sdd->tosnap);
-		rv = zfs_iter_snapshots_sorted(zhp, dump_snapshot, arg,
+		if (!sdd->replicate) {
+			if (sdd->fromsnap != NULL) {
+				min_txg = get_snap_txg(zhp->zfs_hdl,
+				    zhp->zfs_name, sdd->fromsnap);
+			}
+			if (sdd->tosnap != NULL) {
+				max_txg = get_snap_txg(zhp->zfs_hdl,
+				    zhp->zfs_name, sdd->tosnap);
+			}
+		}
+		rv = zfs_iter_snapshots_sorted(zhp, dump_snapshot, sdd,
 		    min_txg, max_txg);
 	} else {
 		char snapname[MAXPATHLEN] = { 0 };
 		zfs_handle_t *snap;
 
+		/* Dump fromsnap. */
 		if (!sdd->seenfrom) {
 			(void) snprintf(snapname, sizeof (snapname),
 			    "%s@%s", zhp->zfs_name, sdd->fromsnap);
@@ -1223,6 +1236,7 @@ dump_filesystem(zfs_handle_t *zhp, void *arg)
 				rv = -1;
 		}
 
+		/* Dump tosnap. */
 		if (rv == 0) {
 			(void) snprintf(snapname, sizeof (snapname),
 			    "%s@%s", zhp->zfs_name, sdd->tosnap);
@@ -1236,6 +1250,7 @@ dump_filesystem(zfs_handle_t *zhp, void *arg)
 	}
 
 	if (!sdd->seenfrom) {
+		/* XXX: printing to stderr instead of logging to zhp? */
 		(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
 		    "WARNING: could not send %s@%s:\n"
 		    "incremental source (%s@%s) does not exist\n"),
@@ -1244,6 +1259,9 @@ dump_filesystem(zfs_handle_t *zhp, void *arg)
 		sdd->err = B_TRUE;
 	} else if (!sdd->seento) {
 		if (sdd->fromsnap) {
+			/* XXX: printing to stderr instead of logging to zhp? */
+			/* XXX: this is a weird way of detecting this error */
+			/* XXX: is this message always correct? */
 			(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
 			    "WARNING: could not send %s@%s:\n"
 			    "incremental source (%s@%s) "
@@ -1251,6 +1269,7 @@ dump_filesystem(zfs_handle_t *zhp, void *arg)
 			    zhp->zfs_name, sdd->tosnap,
 			    zhp->zfs_name, sdd->fromsnap);
 		} else {
+			/* XXX: printing to stderr instead of logging to zhp? */
 			(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
 			    "WARNING: "
 			    "could not send %s@%s: does not exist\n"),
