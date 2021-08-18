@@ -1281,10 +1281,12 @@ dump_filesystem(zfs_handle_t *zhp, send_dump_data_t *sdd)
 	return (rv);
 }
 
+/*
+ * Send all snapshots for all filesystems in sdd.
+ */
 static int
-dump_filesystems(zfs_handle_t *rzhp, void *arg)
+dump_filesystems(zfs_handle_t *rzhp, send_dump_data_t *sdd)
 {
-	send_dump_data_t *sdd = arg;
 	nvpair_t *fspair;
 	boolean_t needagain, progress;
 
@@ -1315,6 +1317,7 @@ dump_filesystems(zfs_handle_t *rzhp, void *arg)
 		}
 	}
 again:
+	/* XXX: O(n^2)? Can we sort these more efficiently? */
 	needagain = progress = B_FALSE;
 	for (fspair = nvlist_next_nvpair(sdd->fss, NULL); fspair;
 	    fspair = nvlist_next_nvpair(sdd->fss, fspair)) {
@@ -1337,7 +1340,7 @@ again:
 		if (parent_guid != 0) {
 			parent_nv = fsavl_find(sdd->fsavl, parent_guid, NULL);
 			if (!nvlist_exists(parent_nv, "sent")) {
-				/* parent has not been sent; skip this one */
+				/* Parent has not been sent; skip this one. */
 				needagain = B_TRUE;
 				continue;
 			}
@@ -1349,7 +1352,7 @@ again:
 			if (origin_nv != NULL &&
 			    !nvlist_exists(origin_nv, "sent")) {
 				/*
-				 * origin has not been sent yet;
+				 * Origin has not been sent yet;
 				 * skip this clone.
 				 */
 				needagain = B_TRUE;
@@ -1372,7 +1375,7 @@ again:
 		goto again;
 	}
 
-	/* clean out the sent flags in case we reuse this fss */
+	/* Clean out the sent flags in case we reuse this fss. */
 	for (fspair = nvlist_next_nvpair(sdd->fss, NULL); fspair;
 	    fspair = nvlist_next_nvpair(sdd->fss, fspair)) {
 		nvlist_t *fslist;
