@@ -1468,6 +1468,7 @@ static enum lzc_send_flags
 lzc_flags_from_sendflags(const sendflags_t *flags)
 {
 	enum lzc_send_flags lzc_flags = 0;
+
 	if (flags->largeblock)
 		lzc_flags |= LZC_SEND_FLAG_LARGE_BLOCK;
 	if (flags->embed_data)
@@ -1478,6 +1479,7 @@ lzc_flags_from_sendflags(const sendflags_t *flags)
 		lzc_flags |= LZC_SEND_FLAG_RAW;
 	if (flags->saved)
 		lzc_flags |= LZC_SEND_FLAG_SAVED;
+
 	return (lzc_flags);
 }
 
@@ -1674,18 +1676,36 @@ find_redact_book(libzfs_handle_t *hdl, const char *path,
 	return (0);
 }
 
+static enum lzc_send_flags
+lzc_flags_from_resume_nvl(nvlist_t *resume_nvl)
+{
+	enum lzc_send_flags lzc_flags = 0;
+
+	if (nvlist_exists(resume_nvl, "largeblockok"))
+		lzc_flags |= LZC_SEND_FLAG_LARGE_BLOCK;
+	if (nvlist_exists(resume_nvl, "embedok"))
+		lzc_flags |= LZC_SEND_FLAG_EMBED_DATA;
+	if (nvlist_exists(resume_nvl, "compressok"))
+		lzc_flags |= LZC_SEND_FLAG_COMPRESS;
+	if (nvlist_exists(resume_nvl, "rawok"))
+		lzc_flags |= LZC_SEND_FLAG_RAW;
+	if (nvlist_exists(resume_nvl, "savedok"))
+		lzc_flags |= LZC_SEND_FLAG_SAVED;
+
+	return (lzc_flags);
+}
+
 static int
 zfs_send_resume_impl(libzfs_handle_t *hdl, sendflags_t *flags, int outfd,
     nvlist_t *resume_nvl)
 {
-	char errbuf[1024];
+	char errbuf[1024]; /* XXX: magic number buffer size */
 	char *toname;
 	char *fromname = NULL;
 	uint64_t resumeobj, resumeoff, toguid, fromguid, bytes;
 	zfs_handle_t *zhp;
 	int error = 0;
 	char name[ZFS_MAX_DATASET_NAME_LEN];
-	enum lzc_send_flags lzc_flags = 0;
 	FILE *fout = (flags->verbosity > 0 && flags->dryrun) ? stdout : stderr;
 	uint64_t *redact_snap_guids = NULL;
 	int num_redact_snaps = 0;
@@ -1711,17 +1731,6 @@ zfs_send_resume_impl(libzfs_handle_t *hdl, sendflags_t *flags, int outfd,
 	}
 	fromguid = 0;
 	(void) nvlist_lookup_uint64(resume_nvl, "fromguid", &fromguid);
-
-	if (flags->largeblock || nvlist_exists(resume_nvl, "largeblockok"))
-		lzc_flags |= LZC_SEND_FLAG_LARGE_BLOCK;
-	if (flags->embed_data || nvlist_exists(resume_nvl, "embedok"))
-		lzc_flags |= LZC_SEND_FLAG_EMBED_DATA;
-	if (flags->compress || nvlist_exists(resume_nvl, "compressok"))
-		lzc_flags |= LZC_SEND_FLAG_COMPRESS;
-	if (flags->raw || nvlist_exists(resume_nvl, "rawok"))
-		lzc_flags |= LZC_SEND_FLAG_RAW;
-	if (flags->saved || nvlist_exists(resume_nvl, "savedok"))
-		lzc_flags |= LZC_SEND_FLAG_SAVED;
 
 	if (flags->saved) {
 		(void) strcpy(name, toname);
@@ -1782,6 +1791,9 @@ zfs_send_resume_impl(libzfs_handle_t *hdl, sendflags_t *flags, int outfd,
 			return (error);
 		}
 	}
+
+	enum lzc_send_flags lzc_flags = lzc_flags_from_sendflags(flags) |
+	    lzc_flags_from_resume_nvl(resume_nvl);
 
 	if (flags->verbosity != 0) {
 		/*
