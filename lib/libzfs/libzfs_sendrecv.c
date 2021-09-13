@@ -1414,7 +1414,7 @@ zfs_send_resume_token_to_nvlist(libzfs_handle_t *hdl, const char *token)
 		return (NULL);
 	}
 
-	/* convert hexadecimal representation to binary */
+	/* Convert hexadecimal representation to binary. */
 	token = strrchr(token, '-') + 1;
 	int len = strlen(token) / 2;
 	unsigned char *compressed = zfs_alloc(hdl, len);
@@ -1429,7 +1429,7 @@ zfs_send_resume_token_to_nvlist(libzfs_handle_t *hdl, const char *token)
 		}
 	}
 
-	/* verify checksum */
+	/* Verify checksum. */
 	zio_cksum_t cksum;
 	fletcher_4_native_varsize(compressed, len, &cksum);
 	if (cksum.zc_word[0] != checksum) {
@@ -1439,7 +1439,7 @@ zfs_send_resume_token_to_nvlist(libzfs_handle_t *hdl, const char *token)
 		return (NULL);
 	}
 
-	/* uncompress */
+	/* Uncompress. */
 	void *packed = zfs_alloc(hdl, packed_len);
 	uLongf packed_len_long = packed_len;
 	if (uncompress(packed, &packed_len_long, compressed, len) != Z_OK ||
@@ -1451,7 +1451,7 @@ zfs_send_resume_token_to_nvlist(libzfs_handle_t *hdl, const char *token)
 		return (NULL);
 	}
 
-	/* unpack nvlist */
+	/* Unpack nvlist. */
 	nvlist_t *nv;
 	int error = nvlist_unpack(packed, packed_len, &nv, KM_SLEEP);
 	free(packed);
@@ -1463,6 +1463,7 @@ zfs_send_resume_token_to_nvlist(libzfs_handle_t *hdl, const char *token)
 	}
 	return (nv);
 }
+
 static enum lzc_send_flags
 lzc_flags_from_sendflags(const sendflags_t *flags)
 {
