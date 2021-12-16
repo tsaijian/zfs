@@ -119,7 +119,6 @@ vn_is_readonly(vnode_t *vp)
 /* TODO: This field needs conversion! */
 #define	va_nblocks	va_bytes
 #define	va_blksize	va_blocksize
-#define	va_seq		va_gen
 
 #define	MAXOFFSET_T	OFF_MAX
 #define	EXCL		0
