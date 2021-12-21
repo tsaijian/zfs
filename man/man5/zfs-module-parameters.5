@@ -1165,6 +1165,21 @@ Default value: \fB0\fR.
 .sp
 .ne 2
 .na
+\fBzfs_arc_prune_task_threads\fR (int)
+.ad
+.RS 12n
+Number of arc_prune threads.
+.Fx
+does not need more than one.
+Linux may theoretically use one per mount point up to number of CPUs,
+but that was not proven to be useful.
+.sp
+Default value: \fB1\fR
+.RE
+
+.sp
+.ne 2
+.na
 \fBzfs_max_missing_tvds\fR (int)
 .ad
 .RS 12n
