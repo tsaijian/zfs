@@ -2565,7 +2565,7 @@ zfs_send_one(zfs_handle_t *zhp, const char *from, int fd, sendflags_t *flags,
 		}
 	}
 
-	if (flags->props || flags->holds || flags->backup) {
+	if (err == 0 && (flags->props || flags->holds || flags->backup)) {
 		/* Write the final end record. */
 		err = send_conclusion_record(orig_fd, NULL);
 		if (err != 0)
