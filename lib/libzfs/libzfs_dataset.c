@@ -2251,6 +2251,10 @@ get_numeric_property(zfs_handle_t *zhp, zfs_prop_t prop, zprop_source_t *src,
 		*val = zhp->zfs_dmustats.dds_num_clones;
 		break;
 
+	case ZFS_PROP_CREATETXG:
+		*val = zhp->zfs_dmustats.dds_creation_txg;
+		break;
+
 	case ZFS_PROP_VERSION:
 	case ZFS_PROP_NORMALIZE:
 	case ZFS_PROP_UTF8ONLY:
