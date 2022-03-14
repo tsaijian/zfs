@@ -863,6 +863,23 @@ zfs_unix_to_v4(uint32_t access_mask)
 	return (new_mask);
 }
 
+
+static uint32_t
+zfs_v4_to_unix(uint32_t access_mask)
+{
+	uint32_t new_mask = 0;
+
+	if (access_mask & WRITE_MASK)
+		new_mask & S_IWOTH;
+	if (access_mask & ACE_READ_DATA)
+		new_mask & S_IROTH;
+	if (access_mask & ACE_EXECUTE)
+		new_mask & S_IXOTH;
+
+	return (new_mask);
+}
+
+
 static void
 zfs_set_ace(zfs_acl_t *aclp, void *acep, uint32_t access_mask,
     uint16_t access_type, uint64_t fuid, uint16_t entry_type)
@@ -2400,6 +2417,24 @@ zfs_has_access(znode_t *zp, cred_t *cr)
 }
 
 static int
+zfs_zaccess_simple(znode_t *zp, uint32_t *working_mode, cred_t *cr)
+{
+	struct inode *i = ZTOI(zp);
+	int mask = zfs_v4_to_unix(*working_mode);
+	mode_t mode = i->i_mode;
+
+	if (crgetuid(cr) == KUID_TO_SUID(i->i_uid))
+		return (0);
+
+	if (mask & mode ^ (mode >> 3)) {
+		if (groupmember(KGID_TO_SGID(i->i_gid), cr))
+			mode >>= 3;
+	}
+
+	return (mask & ~mode) ? -EACCES : 0;
+}
+
+static int
 zfs_zaccess_common(znode_t *zp, uint32_t v4_mode, uint32_t *working_mode,
     boolean_t *check_privs, boolean_t skipaclchk, cred_t *cr)
 {
@@ -2448,6 +2483,10 @@ zfs_zaccess_common(znode_t *zp, uint32_t v4_mode, uint32_t *working_mode,
 	    S_ISDIR(ZTOI(zp)->i_mode) &&
 	    (zp->z_pflags & ZFS_READONLY)) {
 		return (SET_ERROR(EPERM));
+	}
+
+	if (zp->z_pflags & ZFS_ACL_TRIVIAL) {
+		return zfs_zaccess_simple(zp, working_mode, cr);
 	}
 
 	return (zfs_zaccess_aces_check(zp, working_mode, B_FALSE, cr));
