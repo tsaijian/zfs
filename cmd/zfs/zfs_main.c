@@ -53,6 +53,7 @@
 #include <grp.h>
 #include <pwd.h>
 #include <signal.h>
+#include <jansson.h>
 #include <sys/list.h>
 #include <sys/mkdev.h>
 #include <sys/mntent.h>
@@ -121,6 +122,10 @@ static int zfs_do_project(int argc, char **argv);
 static int zfs_do_version(int argc, char **argv);
 static int zfs_do_redact(int argc, char **argv);
 static int zfs_do_wait(int argc, char **argv);
+
+static void zfs_data_to_json(zfs_handle_t *zhp, zprop_list_t *pl, json_t *jsobj, boolean_t getsrc);
+static void json_add_version_info(json_t *jsobj, const char *cmd, int maj_v, int min_v);
+
 
 #ifdef __FreeBSD__
 static int zfs_do_jail(int argc, char **argv);
@@ -1905,13 +1910,12 @@ is_recvd_column(zprop_get_cbdata_t *cbp)
  * Invoked to display the properties for a single dataset.
  */
 static int
-get_callback(zfs_handle_t *zhp, void *data)
+get_callback_text(zfs_handle_t *zhp, zprop_get_cbdata_t *cbp)
 {
 	char buf[ZFS_MAXPROPLEN];
 	char rbuf[ZFS_MAXPROPLEN];
 	zprop_source_t sourcetype;
 	char source[ZFS_MAX_DATASET_NAME_LEN];
-	zprop_get_cbdata_t *cbp = data;
 	nvlist_t *user_props = zfs_get_user_props(zhp);
 	zprop_list_t *pl = cbp->cb_proplist;
 	nvlist_t *propval;
@@ -2018,6 +2022,19 @@ get_callback(zfs_handle_t *zhp, void *data)
 }
 
 static int
+get_callback(zfs_handle_t *zhp, void *data)
+{
+	zprop_get_cbdata_t *cbp = data;
+
+	if (cbp->private_data != NULL) {
+		zfs_data_to_json(zhp, cbp->cb_proplist, cbp->private_data, B_TRUE);
+		return (0);
+	}
+
+	return get_callback_text(zhp, cbp);
+}
+
+static int
 zfs_do_get(int argc, char **argv)
 {
 	zprop_get_cbdata_t cb = { 0 };
@@ -2027,6 +2044,8 @@ zfs_do_get(int argc, char **argv)
 	int ret = 0;
 	int limit = 0;
 	zprop_list_t fake_name = { 0 };
+	json_t *jsobj = NULL;
+	json_t *cb_json = NULL;
 
 	/*
 	 * Set up default columns and sources.
@@ -2039,7 +2058,7 @@ zfs_do_get(int argc, char **argv)
 	cb.cb_type = ZFS_TYPE_DATASET;
 
 	/* check options */
-	while ((c = getopt(argc, argv, ":d:o:s:rt:Hp")) != -1) {
+	while ((c = getopt(argc, argv, ":d:o:s:jrt:Hp")) != -1) {
 		switch (c) {
 		case 'p':
 			cb.cb_literal = B_TRUE;
@@ -2049,6 +2068,16 @@ zfs_do_get(int argc, char **argv)
 			break;
 		case 'r':
 			flags |= ZFS_ITER_RECURSE;
+			break;
+		case 'j':
+			jsobj = json_object();
+			if (jsobj == NULL)
+				nomem();
+			cb_json = json_array();
+			if (cb_json == NULL)
+				nomem();
+
+			cb.private_data = (void *)cb_json;
 			break;
 		case 'H':
 			cb.cb_scripted = B_TRUE;
@@ -2249,6 +2278,21 @@ zfs_do_get(int argc, char **argv)
 	/* run for each object */
 	ret = zfs_for_each(argc, argv, flags, types, NULL,
 	    &cb.cb_proplist, limit, get_callback, &cb);
+
+
+	if (jsobj != NULL) {
+		char *to_free = NULL;
+		json_add_version_info(jsobj, "zfs_do_get", 0, 1);
+		ret = json_object_set_new(jsobj, "data", cb_json);
+		if (ret)
+			nomem();
+		to_free = json_dumps(jsobj, 0);
+		if (to_free == NULL)
+			nomem();
+		printf("%s\n", to_free);
+		free(to_free);
+		json_decref(jsobj);
+	}
 
 	if (cb.cb_proplist == &fake_name)
 		zprop_free_list(fake_name.pl_next);
@@ -3437,6 +3481,401 @@ zfs_do_userspace(int argc, char **argv)
 	return (ret);
 }
 
+static void
+json_add_zfs_version(json_t *jsobj)
+{
+	json_t *zfs_version = NULL;
+	json_t *userland = NULL;
+	json_t *kernel = NULL;
+	char zver_userland[128];
+	char zver_kernel[1024];
+
+	zfs_version = json_object();
+	if (zfs_version == NULL)
+		nomem();
+
+	zfs_version_userland(zver_userland, sizeof (zver_userland));
+
+	if (zfs_version_kernel(zver_kernel, sizeof (zver_kernel)) == -1) {
+		json_t *jserrmsg = NULL;
+		json_t *jserrno = NULL;
+
+		kernel = json_object();
+		if (kernel == NULL)
+			nomem();
+
+		snprintf(zver_kernel, sizeof (zver_kernel),
+		    "zfs_version_kernel() failed: %s", strerror(errno));
+
+		jserrmsg = json_string(zver_kernel);
+		jserrno = json_integer(errno);
+
+		if (json_object_set_new(kernel, "errno", jserrno) != 0)
+			nomem();
+
+		if (json_object_set_new(kernel, "errmsg", jserrmsg) != 0)
+			nomem();
+	}
+	else
+		kernel = json_string(zver_kernel);
+
+	userland = json_string(zver_userland);
+
+	if (json_object_set_new(zfs_version, "userland", userland) != 0)
+		nomem();
+
+	if (json_object_set_new(zfs_version, "kernel", kernel) != 0)
+		nomem();
+
+	if (json_object_set_new(jsobj, "zfs_version", zfs_version) != 0)
+		nomem();
+}
+
+static void
+json_add_version_info(json_t *jsobj, const char *cmd, int maj_v, int min_v)
+{
+	json_t *version_info = NULL;
+	json_t *thecmd = NULL;
+	json_t *jsmaj = NULL;
+	json_t *jsmin = NULL;
+
+	version_info = json_object();
+	if (version_info == NULL)
+		nomem();
+
+	json_add_zfs_version(jsobj);
+
+	thecmd = json_string(cmd);
+	jsmaj = json_integer(maj_v);
+	jsmin = json_integer(min_v);
+
+	if (json_object_set_new(version_info, "command", thecmd) != 0)
+		nomem();
+
+	if (json_object_set_new(version_info, "vers_major", jsmaj) != 0)
+		nomem();
+
+	if (json_object_set_new(version_info, "vers_minor", jsmin) != 0)
+		nomem();
+
+	if (json_object_set_new(jsobj, "output_version", version_info) != 0)
+		nomem();
+}
+
+static void
+zfs_type_to_json(zfs_handle_t *zhp, json_t *jsobj)
+{
+	zfs_type_t zfs_type = zfs_get_type(zhp);
+	json_t *jstype = NULL;
+	json_t *jspool = NULL;
+	json_t *jsdsname = NULL;
+	json_t *jssnap = NULL;
+
+	switch(zfs_type) {
+	case ZFS_TYPE_FILESYSTEM:
+		jstype = json_string("FILESYSTEM");
+		break;
+	case ZFS_TYPE_VOLUME:
+		jstype = json_string("VOLUME");
+		break;
+	case ZFS_TYPE_SNAPSHOT:
+		jstype = json_string("SNAPSHOT");
+		break;
+	case ZFS_TYPE_POOL:
+		jstype = json_string("POOL");
+		break;
+	case ZFS_TYPE_BOOKMARK:
+		jstype = json_string("BOOKMARK");
+		break;
+	default:
+		jstype = json_string("UNKNOWN");
+		break;
+	}
+
+	if (json_object_set_new(jsobj, "type", jstype) != 0)
+		nomem();
+
+	if (zfs_type != ZFS_TYPE_POOL) {
+		jspool = json_string(zfs_get_pool_name(zhp));
+		if (json_object_set_new(jsobj, "pool", jspool) != 0)
+			nomem();
+	}
+
+	if (zfs_type == ZFS_TYPE_SNAPSHOT) {
+		char *ds, *snap, *tofree;
+		ds = snap = tofree = strdup(zfs_get_name(zhp));
+		if (tofree == NULL)
+			nomem();
+
+		ds = strsep(&snap, "@");
+		jsdsname = json_string(ds);
+		jssnap = json_string(snap);
+
+		if (json_object_set_new(jsobj, "dataset", jsdsname) != 0)
+			nomem();
+
+		if (json_object_set_new(jsobj, "snapshot_name", jssnap) != 0)
+			nomem();
+
+		free(tofree);
+	}
+}
+
+
+static void
+basic_zfs_info_to_json(zfs_handle_t *zhp, json_t *jsobj)
+{
+	json_t *jsname = NULL;
+	json_t *jscreate_txg = NULL;
+	char createtxg[ZFS_MAXPROPLEN];
+
+	if (zfs_prop_get(zhp, ZFS_PROP_CREATETXG, createtxg,
+	    sizeof (createtxg), NULL, NULL, 0,
+	    B_TRUE) != 0)
+		jscreate_txg = json_null();
+	else
+		jscreate_txg = json_string(createtxg);
+
+	jsname = json_string(zfs_get_name(zhp));
+
+	if (json_object_set_new(jsobj, "name", jsname) != 0)
+		nomem();
+
+	zfs_type_to_json(zhp, jsobj);
+
+	if (json_object_set_new(jsobj, "createtxg", jscreate_txg) != 0)
+		nomem();
+}
+
+static void
+properties_to_json(zfs_handle_t *zhp, zprop_list_t *pl, json_t *properties, boolean_t getsrc)
+{
+	uint64_t intval;
+	json_t *prop_json = NULL;
+	json_t *raw = NULL;
+	json_t *value = NULL;
+	json_t *parsed = NULL;
+	json_t *src = NULL;
+	zprop_source_t sourcetype;
+	char source[ZFS_MAX_DATASET_NAME_LEN];
+	char rbuf[ZFS_MAXPROPLEN];
+	char property[ZFS_MAXPROPLEN];
+	char *propstr;
+	const char *prop_name;
+
+	prop_json = json_object();
+	if (prop_json == NULL)
+		nomem();
+
+	if (getsrc) {
+		src = json_object();
+		if (src == NULL)
+			nomem();
+	}
+
+	switch (pl->pl_prop) {
+	case ZFS_PROP_NAME:
+		prop_name = zfs_prop_to_name(pl->pl_prop);
+		raw = json_string(zfs_get_name(zhp));
+		parsed = json_string(zfs_get_name(zhp));
+		value = json_string(zfs_get_name(zhp));
+		sourcetype = ZPROP_SRC_NONE;
+		break;
+	case ZFS_PROP_CREATETXG:
+		intval = zfs_prop_get_int(zhp, pl->pl_prop);
+		if (intval == 0) {
+			raw = json_null();
+			parsed = json_null();
+			value = json_null();
+		}
+		snprintf(property, sizeof(property), "%ld", intval);
+		raw = json_string(property);
+		parsed = json_string(propstr);
+		value = json_string(propstr);
+		sourcetype = ZPROP_SRC_NONE;
+		break;
+	case ZPROP_INVAL:
+		return;
+	case ZFS_PROP_GUID:
+	case ZFS_PROP_USED:
+	case ZFS_PROP_AVAILABLE:
+	case ZFS_PROP_REFERENCED:
+	case ZFS_PROP_LOGICALUSED:
+	case ZFS_PROP_USEDDS:
+	case ZFS_PROP_USEDSNAP:
+	case ZFS_PROP_USEDCHILD:
+	case ZFS_PROP_USEDREFRESERV:
+		prop_name = zfs_prop_to_name(pl->pl_prop);
+
+		if (zfs_prop_get(zhp, pl->pl_prop, property,
+		    sizeof (property),
+		    getsrc ? &sourcetype : NULL,
+		    getsrc ? source : NULL,
+		    getsrc ? sizeof (source) : 0,
+		    B_TRUE) != 0) {
+			sourcetype = ZPROP_SRC_NONE;
+			propstr = "-";
+		}
+		else
+			propstr = property;
+
+		raw = json_string(propstr);
+
+		if (zfs_prop_get(zhp, pl->pl_prop, property,
+		    sizeof (property), NULL, NULL, 0,
+		    B_FALSE) != 0) {
+			sourcetype = ZPROP_SRC_NONE;
+			propstr = "-";
+		}
+		else
+			propstr = property;
+
+		value = json_string(propstr);
+		parsed = json_string(propstr);
+		break;
+
+	default:
+		prop_name = zfs_prop_to_name(pl->pl_prop);
+
+		if (zfs_prop_get(zhp, pl->pl_prop, property,
+		    sizeof (property),
+		    getsrc ? &sourcetype : NULL,
+		    getsrc ? source : NULL,
+		    getsrc ? sizeof (source) : 0,
+		    B_TRUE) != 0) {
+			sourcetype = ZPROP_SRC_NONE;
+			propstr = "-";
+		}
+		else
+			propstr = property;
+
+		raw = json_string(propstr);
+
+		if (zfs_prop_get(zhp, pl->pl_prop, property,
+		    sizeof (property), NULL, NULL, 0,
+		    B_FALSE) != 0)
+			propstr = "-";
+		else
+			propstr = property;
+
+		value = json_string(propstr);
+
+		switch (zfs_prop_get_type(pl->pl_prop)) {
+		case PROP_TYPE_STRING:
+			parsed = json_string(propstr);
+			break;
+		case PROP_TYPE_NUMBER:
+		case PROP_TYPE_INDEX:
+			if (strcmp(propstr, "none") == 0) {
+				parsed = json_null();
+				break;
+			}
+			intval = zfs_prop_get_int(zhp, pl->pl_prop);
+			if (intval > INT32_MAX)
+				parsed = json_integer(-1);
+			else
+				parsed = json_integer(intval);
+			break;
+		default:
+			return;
+		}
+		break;
+	}
+	if (json_object_set_new(prop_json, "rawvalue", raw) != 0)
+		nomem();
+
+	if (json_object_set_new(prop_json, "parsed", parsed) != 0)
+		nomem();
+
+	if (json_object_set_new(prop_json, "value", value) != 0)
+		nomem();
+
+	if (getsrc) {
+		switch(sourcetype) {
+		case ZPROP_SRC_DEFAULT:
+			if (json_object_set_new(src, "type", json_string("DEFAULT")) != 0)
+				nomem();
+			if (json_object_set_new(src, "data", json_null()) != 0)
+				nomem();
+			break;
+		case ZPROP_SRC_TEMPORARY:
+			if (json_object_set_new(src, "type", json_string("TEMPORARY")) != 0)
+				nomem();
+			if (json_object_set_new(src, "data", json_null()) != 0)
+				nomem();
+			break;
+		case ZPROP_SRC_LOCAL:
+			if (json_object_set_new(src, "type", json_string("LOCAL")) != 0)
+				nomem();
+			if (json_object_set_new(src, "data", json_null()) != 0)
+				nomem();
+			break;
+		case ZPROP_SRC_INHERITED:
+			if (json_object_set_new(src, "type", json_string("INHERITED")) != 0)
+				nomem();
+			if (json_object_set_new(src, "data", json_string(source)) != 0)
+				nomem();
+			break;
+		case ZPROP_SRC_RECEIVED:
+			if (json_object_set_new(src, "type", json_string("RECEIVED")) != 0)
+				nomem();
+
+			if (zfs_prop_get_recvd(zhp,
+			    zfs_prop_to_name(pl->pl_prop), rbuf, sizeof (rbuf),
+			    B_TRUE) == 0) {
+				if (json_object_set_new(src, "data", json_string(rbuf)) != 0)
+					nomem();
+			} else {
+				if (json_object_set_new(src, "data", json_null()) != 0)
+					nomem();
+			}
+			break;
+		case ZPROP_SRC_NONE:
+		default:
+			if (json_object_set_new(src, "type", json_string("NONE")) != 0)
+				nomem();
+
+			if (json_object_set_new(src, "data", json_null()) != 0)
+				nomem();
+			break;
+		}
+		if (json_object_set_new(prop_json, "source", src) != 0)
+			nomem();
+	}
+
+	if (json_object_set_new(properties, prop_name, prop_json) != 0)
+		nomem();
+}
+
+static void
+zfs_data_to_json(zfs_handle_t *zhp, zprop_list_t *pl, json_t *jsobj, boolean_t getsrc)
+{
+	json_t *zfs_json = NULL;
+	json_t *properties = NULL;
+
+	zfs_json = json_object();
+	if (zfs_json == NULL)
+		nomem();
+
+	properties = json_object();
+	if (properties == NULL)
+		nomem();
+
+	for (; pl != NULL; pl = pl->pl_next) {
+		properties_to_json(zhp, pl, properties, getsrc);
+	}
+
+	basic_zfs_info_to_json(zhp, zfs_json);
+
+	if (json_object_set_new(zfs_json, "properties", properties) != 0)
+		nomem();
+
+	if (json_array_append_new(jsobj, zfs_json) != 0)
+		nomem();
+
+	return;
+}
+
 /*
  * list [-Hp][-r|-d max] [-o property[,...]] [-s property] ... [-S property]
  *      [-t type[,...]] [filesystem|volume|snapshot] ...
@@ -3458,6 +3897,7 @@ typedef struct list_cbdata {
 	boolean_t	cb_first;
 	boolean_t	cb_literal;
 	boolean_t	cb_scripted;
+	json_t		*cb_json;
 	zprop_list_t	*cb_proplist;
 } list_cbdata_t;
 
@@ -3589,13 +4029,16 @@ list_callback(zfs_handle_t *zhp, void *data)
 {
 	list_cbdata_t *cbp = data;
 
-	if (cbp->cb_first) {
+	if (cbp->cb_first && cbp->cb_json == NULL) {
 		if (!cbp->cb_scripted)
 			print_header(cbp);
 		cbp->cb_first = B_FALSE;
 	}
 
-	print_dataset(zhp, cbp);
+        if (cbp->cb_json == NULL)
+		print_dataset(zhp, cbp);
+        else
+		zfs_data_to_json(zhp, cbp->cb_proplist, cbp->cb_json, B_FALSE);
 
 	return (0);
 }
@@ -3608,6 +4051,7 @@ zfs_do_list(int argc, char **argv)
 	    "name,used,available,referenced,mountpoint";
 	int types = ZFS_TYPE_DATASET;
 	boolean_t types_specified = B_FALSE;
+	json_t *jsout = NULL;
 	char *fields = NULL;
 	list_cbdata_t cb = { 0 };
 	char *value;
@@ -3617,7 +4061,7 @@ zfs_do_list(int argc, char **argv)
 	int flags = ZFS_ITER_PROP_LISTSNAPS | ZFS_ITER_ARGS_CAN_BE_PATHS;
 
 	/* check options */
-	while ((c = getopt(argc, argv, "HS:d:o:prs:t:")) != -1) {
+	while ((c = getopt(argc, argv, "HS:d:o:jprs:t:")) != -1) {
 		switch (c) {
 		case 'o':
 			fields = optarg;
@@ -3634,6 +4078,14 @@ zfs_do_list(int argc, char **argv)
 			break;
 		case 'H':
 			cb.cb_scripted = B_TRUE;
+			break;
+		case 'j':
+			jsout = json_object();
+			if (jsout == NULL)
+				nomem();
+			cb.cb_json = json_array();
+			if (cb.cb_json == NULL)
+				nomem();
 			break;
 		case 's':
 			if (zfs_add_sort_column(&sortcol, optarg,
@@ -3745,7 +4197,20 @@ zfs_do_list(int argc, char **argv)
 	zprop_free_list(cb.cb_proplist);
 	zfs_free_sort_columns(sortcol);
 
-	if (ret == 0 && cb.cb_first && !cb.cb_scripted)
+	if (jsout != NULL) {
+		char *to_free = NULL;
+		json_add_version_info(jsout, "zfs_do_list", 0, 1);
+		ret = json_object_set_new(jsout, "data", cb.cb_json);
+		if (ret)
+			nomem();
+		to_free = json_dumps(jsout, 0);
+		if (to_free == NULL)
+			nomem();
+		printf("%s\n", to_free);
+		free(to_free);
+		json_decref(jsout);
+	}
+	else if (ret == 0 && cb.cb_first && !cb.cb_scripted)
 		(void) fprintf(stderr, gettext("no datasets available\n"));
 
 	return (ret);
