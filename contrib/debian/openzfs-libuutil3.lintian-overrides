@@ -1,0 +1,3 @@
+package-name-doesnt-match-sonames
+extra-license-file usr/share/doc/openzfs-libuutil3/LICENSE.gz
+exit-in-shared-library
