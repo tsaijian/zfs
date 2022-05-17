@@ -75,19 +75,19 @@ libzfs_la_LIBADD = \
 	$(abs_top_builddir)/lib/libnvpair/libnvpair.la \
 	$(abs_top_builddir)/lib/libuutil/libuutil.la
 
-libzfs_la_LIBADD += -lm $(LIBCRYPTO_LIBS) $(ZLIB_LIBS) $(LTLIBINTL)
-libzfs_la_LIBADD += -lm $(BSDLIB) $(LIBSSL)
+libzfs_la_LIBADD += -lm $(LIBCRYPTO_LIBS) $(ZLIB_LIBS) $(LIBFETCH_LIBS) $(LTLIBINTL) $(BSDLIB)
+
+libzfs_la_LDFLAGS = -pthread
+
+if !ASAN_ENABLED
+libzfs_la_LDFLAGS += -Wl,-z,defs
+endif
 
 if BUILD_FREEBSD
 libzfs_la_LIBADD += -lutil -lgeom
 endif
 
-libzfs_la_LDFLAGS = -pthread
 libzfs_la_LDFLAGS += -version-info 5:0:1
-
-if !ASAN_ENABLED
-libzfs_la_LDFLAGS += -Wl,-z,defs
-endif
 
 include $(top_srcdir)/config/CppCheck.am
 

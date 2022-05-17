@@ -3072,11 +3072,15 @@ zpool_vdev_online(zpool_handle_t *zhp, const char *path, int flags,
 		}
 
 		if (wholedisk) {
+#ifdef __FreeBSD__
+			const char *fullpath = pathname;
+#else
 			const char *fullpath = path;
+#endif
 			char buf[MAXPATHLEN];
 
-			if (path[0] != '/') {
-				error = zfs_resolve_shortname(path, buf,
+			if (fullpath[0] != '/') {
+				error = zfs_resolve_shortname(fullpath, buf,
 				    sizeof (buf));
 				if (error != 0)
 					return (zfs_error(hdl, EZFS_NODEVICE,
