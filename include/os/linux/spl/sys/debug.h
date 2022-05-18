@@ -128,6 +128,16 @@ void spl_dumpstack(void);
 	typedef char __attribute__ ((unused))				\
 	__compile_time_assertion__ ## y[(x) ? 1 : -1]
 
+#define	VERIFY_IMPLY(A, B) \
+	((void)(likely((!(A)) || (B)) || \
+	    spl_panic(__FILE__, __FUNCTION__, __LINE__, \
+	    "(" #A ") implies (" #B ")")))
+
+#define	VERIFY_EQUIV(A, B) \
+	((void)(likely(!!(A) == !!(B)) || \
+	    spl_panic(__FILE__, __FUNCTION__, __LINE__, \
+	    "(" #A ") is equivalent to (" #B ")")))
+
 /*
  * Debugging disabled (--disable-debug)
  */
@@ -153,15 +163,8 @@ void spl_dumpstack(void);
 #define	ASSERT3P	VERIFY3P
 #define	ASSERT0		VERIFY0
 #define	ASSERT		VERIFY
-#define	IMPLY(A, B) \
-	((void)(likely((!(A)) || (B)) || \
-	    spl_panic(__FILE__, __FUNCTION__, __LINE__, \
-	    "(" #A ") implies (" #B ")")))
-#define	EQUIV(A, B) \
-	((void)(likely(!!(A) == !!(B)) || \
-	    spl_panic(__FILE__, __FUNCTION__, __LINE__, \
-	    "(" #A ") is equivalent to (" #B ")")))
-/* END CSTYLED */
+#define	IMPLY		VERIFY_IMPLY
+#define	EQUIV		VERIFY_EQUIV
 
 #endif /* NDEBUG */
 
