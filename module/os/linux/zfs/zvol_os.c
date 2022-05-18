@@ -903,22 +903,17 @@ zvol_alloc(dev_t dev, const char *name)
 	zso->zvo_disk->major = zvol_major;
 	zso->zvo_disk->events = DISK_EVENT_MEDIA_CHANGE;
 
+	/*
+	 * Setting ZFS_VOLMODE_DEV disables partitioning on ZVOL devices.
+	 * This is accomplished by limiting the number of minors for the
+	 * device to one and explicitly disabling partition scanning.
+	 */
 	if (volmode == ZFS_VOLMODE_DEV) {
-		/*
-		 * ZFS_VOLMODE_DEV disable partitioning on ZVOL devices: set
-		 * gendisk->minors = 1 as noted in include/linux/genhd.h.
-		 * Also disable extended partition numbers (GENHD_FL_EXT_DEVT)
-		 * and suppresses partition scanning (GENHD_FL_NO_PART_SCAN)
-		 * setting gendisk->flags accordingly.
-		 */
 		zso->zvo_disk->minors = 1;
-#if defined(GENHD_FL_EXT_DEVT)
-		zso->zvo_disk->flags &= ~GENHD_FL_EXT_DEVT;
-#endif
-#if defined(GENHD_FL_NO_PART_SCAN)
-		zso->zvo_disk->flags |= GENHD_FL_NO_PART_SCAN;
-#endif
+		zso->zvo_disk->flags &= ~ZFS_GENHD_FL_EXT_DEVT;
+		zso->zvo_disk->flags |= ZFS_GENHD_FL_NO_PART;
 	}
+
 	zso->zvo_disk->first_minor = (dev & MINORMASK);
 	zso->zvo_disk->fops = &zvol_ops;
 	zso->zvo_disk->private_data = zv;
@@ -1110,7 +1105,11 @@ out_doi:
 		rw_enter(&zvol_state_lock, RW_WRITER);
 		zvol_insert(zv);
 		rw_exit(&zvol_state_lock);
+#ifdef HAVE_ADD_DISK_RET
+		error = add_disk(zv->zv_zso->zvo_disk);
+#else
 		add_disk(zv->zv_zso->zvo_disk);
+#endif
 	} else {
 		ida_simple_remove(&zvol_ida, idx);
 	}
