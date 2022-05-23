@@ -32,6 +32,11 @@
 #include <sys/zfs_vnops.h>
 #include <sys/zfs_ctldir.h>
 #include <sys/zpl.h>
+#include <sys/dmu.h>
+#include <sys/dsl_dataset.h>
+#include <sys/zap.h>
+
+
 
 /*
  * Common open routine.  Disallow any write access.
@@ -395,6 +400,9 @@ zpl_snapdir_getattr_impl(const struct path *path, struct kstat *stat,
 {
 	struct inode *ip = path->dentry->d_inode;
 	zfsvfs_t *zfsvfs = ITOZSB(ip);
+	dsl_dataset_t *ds = NULL;
+	uint64_t snap_count;
+	int err;
 
 	ZPL_ENTER(zfsvfs);
 #if defined(HAVE_GENERIC_FILLATTR_USERNS) && defined(HAVE_USERNS_IOPS_GETATTR)
@@ -403,7 +411,19 @@ zpl_snapdir_getattr_impl(const struct path *path, struct kstat *stat,
 	generic_fillattr(ip, stat);
 #endif
 
+	ds = dmu_objset_ds(zfsvfs->z_os);
 	stat->nlink = stat->size = 2;
+
+	if (dsl_dataset_phys(ds)->ds_snapnames_zapobj != 0) {
+		err = zap_count(dmu_objset_pool(ds->ds_objset)->dp_meta_objset,
+		dsl_dataset_phys(ds)->ds_snapnames_zapobj, &snap_count);
+		if (err != 0) {
+			ZFS_EXIT(zfsvfs);
+			return (err);
+		}
+		stat->nlink += snap_count;
+	}
+
 	stat->ctime = stat->mtime = dmu_objset_snap_cmtime(zfsvfs->z_os);
 	stat->atime = current_time(ip);
 	ZPL_EXIT(zfsvfs);
