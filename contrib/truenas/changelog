@@ -1,3 +1,12 @@
+openzfs (2.1.4-0) unstable; urgency=medium
+
+  * Merged OpenZFS zfs-2.1.4
+  * Also merged from zfs-2.1.5-staging
+  * Fix zfs send -V
+  * Expose zpool guids through kstats
+
+ -- Ryan Moeller <ryan@ixsystems.com>  Wed, 18 May 2022 14:00:00 -0500
+
 openzfs (2.1.3-0) unstable; urgency=medium
 
   * Merged OpenZFS zfs-2.1.3
