@@ -1,3 +1,11 @@
+openzfs (2.1.4-1) unstable; urgency=medium
+
+  * Merged from zfs-2.1.5-staging
+  * Remove wrong assertion in log spacemap
+  * Add debug symbols to the truenas package
+
+ -- Ryan Moeller <ryan@ixsystems.com>  Thu, 02 Jun 2022 08:00:00 -0500
+
 openzfs (2.1.4-0) unstable; urgency=medium
 
   * Merged OpenZFS zfs-2.1.4
