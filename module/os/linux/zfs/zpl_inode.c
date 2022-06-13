@@ -112,19 +112,21 @@ zpl_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 }
 
 void
+#ifdef HAVE_IOPS_CREATE_USERNS
+zpl_vap_init(struct user_namespace *user_ns, vattr_t *vap, struct inode *dir, umode_t mode, cred_t *cr)
+{
+	struct inode fake_ino;
+	inode_init_owner(user_ns, &fake_ino, dir, mode);
+#else
 zpl_vap_init(vattr_t *vap, struct inode *dir, umode_t mode, cred_t *cr)
 {
+	struct inode fake_ino;
+	inode_init_owner(&fake_ino, dir, mode);
+#endif
 	vap->va_mask = ATTR_MODE;
-	vap->va_mode = mode;
-	vap->va_uid = crgetuid(cr);
-
-	if (dir && dir->i_mode & S_ISGID) {
-		vap->va_gid = KGID_TO_SGID(dir->i_gid);
-		if (S_ISDIR(mode))
-			vap->va_mode |= S_ISGID;
-	} else {
-		vap->va_gid = crgetgid(cr);
-	}
+	vap->va_uid = fake_ino.i_uid;
+	vap->va_gid = fake_ino.i_gid;
+	vap->va_mode = fake_inode.i_mode;
 }
 
 static int
@@ -143,8 +145,11 @@ zpl_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool flag)
 
 	crhold(cr);
 	vap = kmem_zalloc(sizeof (vattr_t), KM_SLEEP);
+#ifdef HAVE_IOPS_CREATE_USERNS
 	zpl_vap_init(vap, dir, mode, cr);
-
+#else
+	zpl_vap_init(user_ns, vap, dir, mode, cr);
+#endif
 	cookie = spl_fstrans_mark();
 	error = -zfs_create(ITOZ(dir), dname(dentry), vap, 0,
 	    mode, &zp, cr, 0, NULL);
