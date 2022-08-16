@@ -257,12 +257,12 @@ unsigned long zfs_unflushed_log_block_min = 1000;
  * terms of performance. Thus we have a hard limit in the size of the log in
  * terms of blocks.
  */
-unsigned long zfs_unflushed_log_block_max = (1ULL << 18);
+static unsigned long zfs_unflushed_log_block_max = (1ULL << 17);
 
 /*
  * Also we have a hard limit in the size of the log in terms of dirty TXGs.
  */
-unsigned long zfs_unflushed_log_txg_max = 1000;
+static unsigned long zfs_unflushed_log_txg_max = 1000;
 
 /*
  * Max # of rows allowed for the log_summary. The tradeoff here is accuracy and
