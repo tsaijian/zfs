@@ -2300,6 +2300,8 @@ spa_load_verify_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	zio_t *rio = arg;
 	spa_load_error_t *sle = rio->io_private;
 
+	(void) zilog, (void) dnp;
+
 	if (zb->zb_level == ZB_DNODE_LEVEL || BP_IS_HOLE(bp) ||
 	    BP_IS_EMBEDDED(bp) || BP_IS_REDACTED(bp))
 		return (0);
