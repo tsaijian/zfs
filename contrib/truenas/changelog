@@ -1,3 +1,14 @@
+openzfs (2.1.6-0) unstable; urgency=medium
+
+  * Merge tag zfs-2.1.6
+  * zed: mark disks as REMOVED when they are removed
+  * Provide kfpu_begin/end from spl
+  * Add snapshots_changed as property
+  * Add createtxg sort support for simple snapshot iterator
+  * Expose ZFS dataset case sensitivity setting via sb_opts
+
+ -- Ryan Moeller <ryan@ixsystems.com>  Wed, 22 Jun 2022 16:00:00 -0500
+
 openzfs (2.1.5-0) unstable; urgency=medium
 
   * Merged tag zfs-2.1.5
