@@ -109,6 +109,11 @@ A value of
 .Sy 100
 disables this feature.
 .
+.It Sy l2arc_exclude_special Ns = Ns Sy 0 Ns | Ns 1 Pq int
+Controls whether buffers present on special vdevs are eligibile for caching
+into L2ARC.
+If set to 1, exclude dbufs on special vdevs from being cached to L2ARC.
+.
 .It Sy l2arc_mfuonly Ns = Ns Sy 0 Ns | Ns 1 Pq  int
 Controls whether only MFU metadata and data are cached from ARC into L2ARC.
 This may be desired to avoid wasting space on L2ARC when reading/writing large
@@ -342,9 +347,12 @@ When a vdev is added, target this number of metaslabs per top-level vdev.
 .It Sy zfs_vdev_default_ms_shift Ns = Ns Sy 29 Po 512MB Pc Pq int
 Default limit for metaslab size.
 .
-.It Sy zfs_vdev_max_auto_ashift Ns = Ns Sy ASHIFT_MAX Po 16 Pc Pq ulong
+.It Sy zfs_vdev_max_auto_ashift Ns = Ns Sy 14 Pq ulong
 Maximum ashift used when optimizing for logical -> physical sector size on new
 top-level vdevs.
+May be increased up to
+.Sy ASHIFT_MAX Po 16 Pc ,
+but this may negatively impact pool space efficiency.
 .
 .It Sy zfs_vdev_min_auto_ashift Ns = Ns Sy ASHIFT_MIN Po 9 Pc Pq ulong
 Minimum ashift used when creating new top-level vdevs.
@@ -1091,6 +1099,18 @@ Start syncing out a transaction group if there's at least this much dirty data
 This should be less than
 .Sy zfs_vdev_async_write_active_min_dirty_percent .
 .
+.It Sy zfs_wrlog_data_max Ns = Pq int
+The upper limit of write-transaction zil log data size in bytes.
+Write operations are throttled when approaching the limit until log data is
+cleared out after transaction group sync.
+Because of some overhead, it should be set at least 2 times the size of
+.Sy zfs_dirty_data_max
+.No to prevent harming normal write throughput.
+It also should be smaller than the size of the slog device if slog is present.
+.Pp
+Defaults to
+.Sy zfs_dirty_data_max*2
+.
 .It Sy zfs_fallocate_reserve_percent Ns = Ns Sy 110 Ns % Pq uint
 Since ZFS is a copy-on-write filesystem with snapshots, blocks cannot be
 preallocated for a file in order to guarantee that later writes will not
@@ -1325,6 +1345,22 @@ _
 	2048	ZFS_DEBUG_TRIM	Verify TRIM ranges are always within the allocatable range tree.
 	4096	ZFS_DEBUG_LOG_SPACEMAP	Verify that the log summary is consistent with the spacemap log
 			       and enable \fBzfs_dbgmsgs\fP for metaslab loading and flushing.
+.TE
+.Sy \& * No Requires debug build.
+.
+.It Sy zfs_btree_verify_intensity Ns = Ns Sy 0 Pq uint
+Enables btree verification.
+The following settings are culminative:
+.TS
+box;
+lbz r l l .
+	Value	Description
+
+	1	Verify height.
+	2	Verify pointers from children to parent.
+	3	Verify element counts.
+	4	Verify element order. (expensive)
+*	5	Verify unused memory is poisoned. (expensive)
 .TE
 .Sy \& * No Requires debug build.
 .
