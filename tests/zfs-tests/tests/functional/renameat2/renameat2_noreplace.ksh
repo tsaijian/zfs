@@ -37,9 +37,6 @@ function cleanup
 log_assert "ZFS supports RENAME_NOREPLACE."
 log_onexit cleanup
 
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "enabled"
-check_feature_flag "feature@rename_whiteout" "$TESTPOOL1" "enabled"
-
 cd $TESTDIR
 touch foo bar
 
@@ -50,9 +47,5 @@ log_mustnot renameat2 -n bar foo
 
 # Regular renames should succeed.
 log_must renameat2 -n bar baz
-
-# The other rename feature flags should not be active.
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "enabled"
-check_feature_flag "feature@rename_whiteout" "$TESTPOOL1" "enabled"
 
 log_pass "ZFS supports RENAME_NOREPLACE as expected."

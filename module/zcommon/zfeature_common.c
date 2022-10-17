@@ -598,31 +598,6 @@ zpool_feature_init(void)
 	zfeature_register(SPA_FEATURE_DRAID,
 	    "org.openzfs:draid", "draid", "Support for distributed spare RAID",
 	    ZFEATURE_FLAG_MOS, ZFEATURE_TYPE_BOOLEAN, NULL);
-
-#ifdef __linux__
-	{
-		static const spa_feature_t rename_exchange_deps[] = {
-			SPA_FEATURE_EXTENSIBLE_DATASET,
-			SPA_FEATURE_NONE
-		};
-		zfeature_register(SPA_FEATURE_RENAME_EXCHANGE,
-		    "org.openzfs:rename_exchange", "rename_exchange",
-		    "Support for renameat2(RENAME_EXCHANGE).",
-		    ZFEATURE_FLAG_READONLY_COMPAT | ZFEATURE_FLAG_PER_DATASET,
-		    ZFEATURE_TYPE_BOOLEAN, rename_exchange_deps);
-	}
-	{
-		static const spa_feature_t rename_whiteout_deps[] = {
-			SPA_FEATURE_EXTENSIBLE_DATASET,
-			SPA_FEATURE_NONE
-		};
-		zfeature_register(SPA_FEATURE_RENAME_WHITEOUT,
-		    "org.openzfs:rename_whiteout", "rename_whiteout",
-		    "Support for renameat2(RENAME_WHITEOUT).",
-		    ZFEATURE_FLAG_READONLY_COMPAT | ZFEATURE_FLAG_PER_DATASET,
-		    ZFEATURE_TYPE_BOOLEAN, rename_whiteout_deps);
-	}
-#endif
 }
 
 #if defined(_KERNEL)

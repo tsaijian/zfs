@@ -37,8 +37,6 @@ function cleanup
 log_assert "ZFS supports RENAME_EXCHANGE."
 log_onexit cleanup
 
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "enabled"
-
 cd $TESTDIR
 echo "foo" > foo
 echo "bar" > bar
@@ -49,23 +47,15 @@ log_must grep '^foo$' foo
 
 # Basic exchange.
 log_must renameat2 -x foo bar
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "active"
 log_must grep '^bar$' foo
 log_must grep '^foo$' bar
 
 # And exchange back.
 log_must renameat2 -x foo bar
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "active"
 log_must grep '^foo$' foo
 log_must grep '^bar$' bar
 
 # Exchange with a bad path should fail.
 log_mustnot renameat2 -x bar baz
-
-# The feature flag must remain active until a clean export.
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "active"
-log_must zpool export "$TESTPOOL1"
-log_must zpool import "$TESTPOOL1"
-check_feature_flag "feature@rename_exchange" "$TESTPOOL1" "enabled"
 
 log_pass "ZFS supports RENAME_EXCHANGE as expected."

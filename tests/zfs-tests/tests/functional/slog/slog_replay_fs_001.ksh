@@ -70,45 +70,6 @@ log_must zfs set compression=on $TESTPOOL
 log_must zfs create $TESTPOOL/$TESTFS
 
 #
-# Enable the rename_* features on Linux. These features are activated during
-# zfs_rename() and thus by all rights should not be done before we freeze the
-# pool, but due to how 'zpool freeze' is implemented, if the features are
-# activated after the pool is freezed, the activations are not written to the
-# pool. This results in assertion errors in test environments during ZIL replay
-# (in real ZFS deployments this scenario doesn't happen). In order to make
-# these features testable, activate the features before we freeze the pool.
-#
-# See slog_017_neg for what happens if we don't.
-#
-if ! is_linux ; then
-	log_note "renameat2 is linux-only"
-elif ! renameat2 -C ; then
-	log_note "renameat2 not supported on this (pre-3.15) linux kernel"
-else
-	# RENAME_EXCHANGE
-	zfs set "feature@rename_exchange=enabled" "$TESTPOOL"
-	check_feature_flag "feature@rename_exchange" "$TESTPOOL" "enabled"
-	log_must dd if=/dev/urandom of=/$TESTPOOL/$TESTFS/preflight-xchg-a bs=1k count=1
-	log_must dd if=/dev/urandom of=/$TESTPOOL/$TESTFS/preflight-xchg-b bs=1k count=1
-	log_must renameat2 -x /$TESTPOOL/$TESTFS/preflight-xchg-{a,b}
-
-	# RENAME_WHITEOUT
-	zfs set "feature@rename_whiteout=enabled" "$TESTPOOL"
-	check_feature_flag "feature@rename_whiteout" "$TESTPOOL" "enabled"
-	log_must mkfile 1k /$TESTPOOL/$TESTFS/preflight-whiteout
-	log_must renameat2 -w /$TESTPOOL/$TESTFS/preflight-whiteout{,-moved}
-
-	# Make sure the features are active.
-	zpool sync "$TESTPOOL"
-	check_feature_flag "feature@rename_exchange" "$TESTPOOL" "active"
-	check_feature_flag "feature@rename_whiteout" "$TESTPOOL" "active"
-
-	# Clean up since these aren't used for the actual ZIL test.
-	rm /$TESTPOOL/$TESTFS/preflight-*
-fi
-
-
-#
 # This dd command works around an issue where ZIL records aren't created
 # after freezing the pool unless a ZIL header already exists. Create a file
 # synchronously to force ZFS to write one out.

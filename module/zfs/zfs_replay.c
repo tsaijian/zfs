@@ -649,13 +649,6 @@ do_zfs_replay_rename(zfsvfs_t *zfsvfs, lr_rename_t *lr, char *sname,
 #ifdef __linux__
 	VERIFY0(rflags & ~(RENAME_EXCHANGE | RENAME_WHITEOUT));
 
-	VERIFY_IMPLY(rflags & RENAME_EXCHANGE,
-	    spa_feature_is_active(zfsvfs->z_os->os_spa,
-	    SPA_FEATURE_RENAME_EXCHANGE));
-	VERIFY_IMPLY(rflags & RENAME_WHITEOUT,
-	    spa_feature_is_active(zfsvfs->z_os->os_spa,
-	    SPA_FEATURE_RENAME_WHITEOUT));
-
 	/* wo_vap must be non-NULL iff. we're doing RENAME_WHITEOUT */
 	VERIFY_EQUIV(rflags & RENAME_WHITEOUT, wo_vap != NULL);
 #else
@@ -710,11 +703,6 @@ zfs_replay_rename_exchange(void *arg1, void *arg2, boolean_t byteswap)
 	return (do_zfs_replay_rename(zfsvfs, lr, sname, tname, RENAME_EXCHANGE,
 	    NULL));
 #else
-	/*
-	 * We should never reach this point because the feature is not
-	 * supported by non-Linux versions of OpenZFS.
-	 */
-	PANIC("TX_RENAME_EXCHANGE cannot be replayed on non-Linux systems.");
 	return (SET_ERROR(ENOTSUP));
 #endif
 }
@@ -762,11 +750,6 @@ zfs_replay_rename_whiteout(void *arg1, void *arg2, boolean_t byteswap)
 	return (do_zfs_replay_rename(zfsvfs, &lr->lr_rename, sname, tname,
 	    RENAME_WHITEOUT, &xva.xva_vattr));
 #else
-	/*
-	 * We should never reach this point because the feature is not
-	 * supported by non-Linux versions of OpenZFS.
-	 */
-	PANIC("TX_RENAME_WHITEOUT cannot be replayed on non-Linux systems.");
 	return (SET_ERROR(ENOTSUP));
 #endif
 }

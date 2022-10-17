@@ -37,23 +37,14 @@ function cleanup
 log_assert "ZFS supports RENAME_WHITEOUT."
 log_onexit cleanup
 
-check_feature_flag "feature@rename_whiteout" "$TESTPOOL1" "enabled"
-
 cd $TESTDIR
 echo "whiteout" > whiteout
 
 # Straight-forward rename-with-whiteout.
 log_must renameat2 -w whiteout new
-check_feature_flag "feature@rename_whiteout" "$TESTPOOL1" "active"
 # Check new file.
 log_must grep '^whiteout$' new
 # Check that the whiteout is actually a {0,0} char device.
 log_must grep '^character special file:0:0$' <<<"$(stat -c '%F:%t:%T' whiteout)"
-
-# The feature flag must remain active until a clean export.
-check_feature_flag "feature@rename_whiteout" "$TESTPOOL1" "active"
-log_must zpool export "$TESTPOOL1"
-log_must zpool import "$TESTPOOL1"
-check_feature_flag "feature@rename_whiteout" "$TESTPOOL1" "enabled"
 
 log_pass "ZFS supports RENAME_WHITEOUT as expected."

@@ -68,7 +68,6 @@
 #include <sys/cred.h>
 #include <sys/zpl.h>
 #include <sys/zil.h>
-#include <sys/zfeature.h>
 #include <sys/sa_impl.h>
 
 /*
@@ -2597,70 +2596,6 @@ out3:
 	return (err);
 }
 
-typedef struct zfs_activate_feature_arg {
-	const char *name;
-	spa_feature_t feature;
-} zfs_activate_feature_arg;
-
-static int
-zfs_activate_feature_check(void *arg, dmu_tx_t *tx)
-{
-	zfs_activate_feature_arg *zlefa = arg;
-	spa_feature_t f = zlefa->feature;
-
-	dsl_pool_t *dp = dmu_tx_pool(tx);
-
-	if (f == SPA_FEATURE_NONE)
-		return (SET_ERROR(EINVAL));
-
-	if (!spa_feature_is_enabled(dp->dp_spa, f))
-		return (SET_ERROR(ENOTSUP));
-
-	return (0);
-}
-
-static void
-zfs_activate_feature_sync(void *arg, dmu_tx_t *tx)
-{
-	zfs_activate_feature_arg *zlefa = arg;
-	spa_feature_t f = zlefa->feature;
-
-	dsl_pool_t *dp = dmu_tx_pool(tx);
-	dsl_dataset_t *ds = NULL;
-
-	ASSERT3S(spa_feature_table[f].fi_type, ==, ZFEATURE_TYPE_BOOLEAN);
-	VERIFY0(dsl_dataset_hold(dp, zlefa->name, FTAG, &ds));
-	if (dsl_dataset_feature_is_active(ds, f) != B_TRUE) {
-		ds->ds_feature_activation[f] = (void *)B_TRUE;
-		dsl_dataset_activate_feature(ds->ds_object, f,
-		    ds->ds_feature_activation[f], tx);
-		ds->ds_feature[f] = ds->ds_feature_activation[f];
-	}
-	dsl_dataset_rele(ds, FTAG);
-}
-
-static int
-zfs_activate_feature(spa_t *spa, spa_feature_t feature)
-{
-	zfs_activate_feature_arg zlefa = {
-		.name = spa_name(spa),
-		.feature = feature,
-	};
-
-	ASSERT(spa_feature_is_enabled(spa, feature));
-	if (spa_feature_is_active(spa, feature))
-		return (0);
-
-	/*
-	 * We need to wait for the activation to sync out before we continue
-	 * with the rename operation, so that when we create the ZIL entry the
-	 * dataset already has the feature activated.
-	 */
-	return (dsl_sync_task(spa_name(spa), zfs_activate_feature_check,
-	    zfs_activate_feature_sync, &zlefa, 0,
-	    ZFS_SPACE_CHECK_EXTRA_RESERVED));
-}
-
 typedef struct zfs_zlock {
 	krwlock_t	*zl_rwlock;	/* lock we acquired */
 	znode_t		*zl_znode;	/* znode we held */
@@ -2787,7 +2722,6 @@ zfs_rename(znode_t *sdzp, char *snm, znode_t *tdzp, char *tnm,
 	zfs_dirlock_t	*sdl, *tdl;
 	dmu_tx_t	*tx;
 	zfs_zlock_t	*zl;
-	spa_feature_t   zil_feature = SPA_FEATURE_NONE;
 	int		cmp, serr, terr;
 	int		error = 0;
 	int		zflg = 0;
@@ -2823,21 +2757,6 @@ zfs_rename(znode_t *sdzp, char *snm, znode_t *tdzp, char *tnm,
 	ZFS_VERIFY_ZP(sdzp);
 	ZFS_VERIFY_ZP(tdzp);
 	zilog = zfsvfs->z_log;
-
-	switch (rflags & (RENAME_EXCHANGE | RENAME_WHITEOUT)) {
-	case RENAME_EXCHANGE:
-		zil_feature = SPA_FEATURE_RENAME_EXCHANGE;
-		break;
-	case RENAME_WHITEOUT:
-		zil_feature = SPA_FEATURE_RENAME_WHITEOUT;
-		break;
-	}
-
-	if (zil_feature != SPA_FEATURE_NONE &&
-	    !spa_feature_is_enabled(zfsvfs->z_os->os_spa, zil_feature)) {
-		ZFS_EXIT(zfsvfs);
-		return (SET_ERROR(EINVAL));
-	}
 
 	/*
 	 * We check i_sb because snapshots and the ctldir must have different
@@ -3077,19 +2996,6 @@ top:
 			error = SET_ERROR(EDQUOT);
 			goto out;
 		}
-	}
-
-	/*
-	 * Before the dmu_tx is created, activate the RENAME_* feature flags.
-	 * We want to do this as late as possible, to avoid activating the
-	 * feature if the operation is likely to fail, but we have to do it
-	 * before dmu_tx_assign() because we need the feature flag activation
-	 * to sync out before we create the ZIL entry.
-	 */
-	if (zil_feature != SPA_FEATURE_NONE) {
-		error = zfs_activate_feature(zfsvfs->z_os->os_spa, zil_feature);
-		if (error)
-			goto out;
 	}
 
 	tx = dmu_tx_create(zfsvfs->z_os);

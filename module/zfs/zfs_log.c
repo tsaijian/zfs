@@ -45,7 +45,6 @@
 #include <sys/spa.h>
 #include <sys/zfs_fuid.h>
 #include <sys/dsl_dataset.h>
-#include <sys/zfeature.h>
 
 /*
  * These zfs_log_* functions must be called within a dmu tx, in one
@@ -538,12 +537,6 @@ zfs_log_rename_exchange(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
     znode_t *sdzp, const char *sname, znode_t *tdzp, const char *dname,
     znode_t *szp)
 {
-	spa_t *spa = zilog->zl_spa;
-
-	/* zfs_rename must have already activated this feature. */
-	VERIFY(spa_feature_is_enabled(spa, SPA_FEATURE_RENAME_EXCHANGE));
-	VERIFY(spa_feature_is_active(spa, SPA_FEATURE_RENAME_EXCHANGE));
-
 	txtype |= TX_RENAME_EXCHANGE;
 	do_zfs_log_rename(zilog, tx, txtype, sdzp, sname, tdzp, dname, szp);
 }
@@ -560,14 +553,9 @@ zfs_log_rename_whiteout(zilog_t *zilog, dmu_tx_t *tx, uint64_t txtype,
     znode_t *szp, znode_t *wzp)
 {
 	itx_t *itx;
-	spa_t *spa = zilog->zl_spa;
 	lr_rename_whiteout_t *lr;
 	size_t snamesize = strlen(sname) + 1;
 	size_t dnamesize = strlen(dname) + 1;
-
-	/* zfs_rename must have already activated this feature. */
-	VERIFY(spa_feature_is_enabled(spa, SPA_FEATURE_RENAME_WHITEOUT));
-	VERIFY(spa_feature_is_active(spa, SPA_FEATURE_RENAME_WHITEOUT));
 
 	if (zil_replaying(zilog, tx))
 		return;
