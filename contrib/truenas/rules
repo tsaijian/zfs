@@ -6,7 +6,7 @@ export DH_VERBOSE = 1
 
 debarch!= dpkg --print-architecture
 # Prefer the TrueNAS kernel image but fall back to the generic image.
-image!= apt info 'linux-image-truenas-$(debarch)' 'linux-image-$(debarch)' | \
+image!= apt info 'linux-image-truenas-production-$(debarch)' 'linux-image-$(debarch)' | \
 	awk '/^Package:/ { print $$2; exit }'
 
 ifneq (,$(findstring truenas,$(image)))
@@ -26,7 +26,6 @@ endif
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
-		--enable-debuginfo \
 		--with-linux=/usr/src/${src} \
 		--with-linux-obj=/usr/src/${obj}
 
