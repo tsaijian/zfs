@@ -1,0 +1,25 @@
+from distutils.core import setup, Extension
+import os
+
+topsrcdir = "@abs_top_srcdir@"
+relpath_topsrcdir = os.path.relpath(topsrcdir)
+abspath_stdtypes = topsrcdir + "/lib/libspl/include"
+relpath_stdtypes = os.path.relpath(abspath_stdtypes)
+abspath_libs = topsrcdir + "/.libs"
+relpath_libs = os.path.relpath(abspath_libs)
+
+libzfsacl_mod = Extension('libzfsacl',
+                    define_macros = [('MAJOR_VERSION', '0'),
+                                     ('MINOR_VERSION', '1')],
+                    include_dirs = [relpath_topsrcdir, relpath_stdtypes],
+                    extra_objects = [relpath_libs + "/libspl.a"],
+                    sources = ['libzfsacl_impl_linux.c', 'libpyzfsacl.c', 
+                               'libsunacl.c'])
+
+setup (name = 'libzfsacl',
+       version = '0.1',
+       description = 'libzfsacl lib',
+       author = 'iXsystems Inc.',
+       author_email = 'dev@ixsystems.com',
+       url = 'https://docs.python.org/extending/building',
+       ext_modules = [libzfsacl_mod])
