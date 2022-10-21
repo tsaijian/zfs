@@ -1,7 +1,6 @@
 
 #include <sys/acl.h>
-#include "replace.h"
-#include "zfsacl.h"
+#include "libzfsacl.h"
 
 #define BSDACE(zfsace) ((acl_entry_t)zfsace)
 #define BSDACL(zfsacl) ((acl_t)zfsacl)
@@ -125,7 +124,7 @@ zfsacl_t zfsacl_get_link(const char *_path_p, zfsacl_brand_t _brand)
 	return ZFSACL(out);
 }
 
-bool zfsacl_set_fd(int _fd, zfsacl_t _acl)
+boolean_t zfsacl_set_fd(int _fd, zfsacl_t _acl)
 {
 	acl_t acl = BSDACL(_acl);
 	zfsacl_brand_t saved = acl->ats_brand;
@@ -135,10 +134,10 @@ bool zfsacl_set_fd(int _fd, zfsacl_t _acl)
 	err = acl_set_fd_np(_fd, acl, brand_to_type(saved));
 	acl->ats_brand = saved;
 
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsacl_set_file(const char *_path_p, zfsacl_t _acl)
+boolean_t zfsacl_set_file(const char *_path_p, zfsacl_t _acl)
 {
 	acl_t acl = BSDACL(_acl);
 	zfsacl_brand_t saved = acl->ats_brand;
@@ -148,10 +147,10 @@ bool zfsacl_set_file(const char *_path_p, zfsacl_t _acl)
 	err = acl_set_file(_path_p, brand_to_type(saved), acl);
 	acl->ats_brand = saved;
 
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsacl_set_link(const char *_path_p, zfsacl_t _acl)
+boolean_t zfsacl_set_link(const char *_path_p, zfsacl_t _acl)
 {
 	acl_t acl = BSDACL(_acl);
 	zfsacl_brand_t saved = acl->ats_brand;
@@ -161,17 +160,17 @@ bool zfsacl_set_link(const char *_path_p, zfsacl_t _acl)
 	err = acl_set_link_np(_path_p, brand_to_type(saved), acl);
 	acl->ats_brand = saved;
 
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *brandp)
+boolean_t zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *brandp)
 {
 	acl_t acl = BSDACL(_acl);
 	*brandp = acl->ats_brand;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *pflags)
+boolean_t zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *pflags)
 {
 	/*
 	 * TODO: FreeBSD still needs to expose ACL flags
@@ -194,45 +193,45 @@ bool zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *pflags)
 	}
 
 	*pflags = flags_out;
-	return true;
+	return B_TRUE;
 }
 
 
-bool zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t flags)
+boolean_t zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t flags)
 {
 	/*
 	 * TODO: FreeBSD still needs to expose ACL flags
 	 */
 	errno = EOPNOTSUPP;
-	return false;
+	return B_FALSE;
 }
 
-bool zfsacl_get_acecnt(zfsacl_t _acl, uint *_acecnt)
+boolean_t zfsacl_get_acecnt(zfsacl_t _acl, uint *_acecnt)
 {
 	acl_t acl = BSDACL(_acl);
 	*_acecnt = acl->ats_acl.acl_cnt;
-	return true;
+	return B_TRUE;
 }
 
-static bool validate_entry_idx(zfsacl_t _acl, int _idx)
+static boolean_t validate_entry_idx(zfsacl_t _acl, int _idx)
 {
 	uint acecnt;
-	bool ok;
+	boolean_t ok;
 
 	ok = zfsacl_get_acecnt(_acl, &acecnt);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	if ((_idx + 1) > acecnt) {
 		errno = E2BIG;
-		return false;
+		return B_FALSE;
 	}
 
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
+boolean_t zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 {
 	acl_t acl = BSDACL(_acl);
 	int err;
@@ -249,28 +248,28 @@ bool zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 	acl->ats_brand = saved;
 
 	if (err) {
-		return false;
+		return B_FALSE;
 	}
 
 	*_pentry = new_entry;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
+boolean_t zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 {
 	acl_t acl = BSDACL(_acl);
 	acl_entry_t entry = NULL;
 
 	if (!validate_entry_idx(_acl, _idx)) {
-		return false;
+		return B_FALSE;
 	}
 
 	entry = &acl->ats_acl.acl_entry[_idx];
 	*_pentry = entry;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
+boolean_t zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
 {
 	acl_t acl = BSDACL(_acl);
 	int err;
@@ -281,10 +280,10 @@ bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
 	err = acl_delete_entry_np(acl, _idx);
 	acl->ats_brand = saved;
 
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm)
+boolean_t zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	zfsace_permset_t perm = 0;
@@ -297,10 +296,10 @@ bool zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm)
 	}
 
 	*_pperm = perm;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags)
+boolean_t zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	zfsace_flagset_t flags = 0;
@@ -317,10 +316,10 @@ bool zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags)
 	}
 
 	*_pflags = flags;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_paeid)
+boolean_t zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_paeid)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	zfsace_who_t whotype;
@@ -359,10 +358,10 @@ bool zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_pae
 
 	*pwho = whotype;
 	*_paeid = whoid;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp)
+boolean_t zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	zfsace_entry_type_t etype;
@@ -385,10 +384,10 @@ bool zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp)
 	};
 
 	*_tp = etype;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _permset)
+boolean_t zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _permset)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	acl_perm_t permset = 0;
@@ -401,10 +400,10 @@ bool zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _permset)
 	}
 
 	err = acl_set_permset(entry, &permset);
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flagset)
+boolean_t zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flagset)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	acl_flag_t flags = 0;
@@ -417,10 +416,10 @@ bool zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flagset)
 	}
 
 	err = acl_set_flagset_np(entry, &flags);
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _who, zfsace_id_t _aeid)
+boolean_t zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _who, zfsace_id_t _aeid)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	uid_t id = ACL_UNDEFINED_ID;
@@ -457,16 +456,16 @@ bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _who, zfsace_id_t _aeid)
 
 	err = acl_set_tag_type(entry, tag);
 	if (err)
-		return false;
+		return B_FALSE;
 
 	if (id != ACL_UNDEFINED_ID) {
 		err = acl_set_qualifier(entry, &id);
 	}
 
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp)
+boolean_t zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp)
 {
 	acl_entry_t entry = BSDACE(_entry);
 	acl_entry_type_t etype;
@@ -491,27 +490,27 @@ bool zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp)
 
 	err = acl_set_entry_type_np(entry, etype);
 
-	return err ? false : true;
+	return err ? B_FALSE : B_TRUE;
 }
 
-bool zfsacl_to_native(zfsacl_t _acl, struct native_acl *pnative)
+boolean_t zfsacl_to_native(zfsacl_t _acl, struct native_acl *pnative)
 {
 	errno = EOPNOTSUPP;
-	return false;
+	return B_FALSE;
 }
 
-bool zfsacl_is_trivial(zfsacl_t _acl, bool *_trivialp)
+boolean_t zfsacl_is_trivial(zfsacl_t _acl, boolean_t *_trivialp)
 {
 	acl_t acl = BSDACL(_acl);
 	int err, triv;
 
 	err = acl_is_trivial_np(acl, &triv);
 	if (err) {
-		return false;
+		return B_FALSE;
 	}
 
-	*_trivialp = (triv == 1) ? true : false;
-	return true;
+	*_trivialp = (triv == 1) ? B_TRUE : B_FALSE;
+	return B_TRUE;
 }
 
 char *zfsacl_to_text(zfsacl_t _acl)

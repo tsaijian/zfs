@@ -1,6 +1,8 @@
 #ifndef __ZFSACL_H__
 #define __ZFSACL_H__
 
+#include <sys/stdtypes.h>
+#include <errno.h>
 
 /*
  * BRAND_ACCESS and BRAND_DEFAULT
@@ -67,15 +69,68 @@ typedef unsigned int zfsacl_aclflags_t;
 #define ZFSACL_APPEND_ENTRY	-1
 #define ZFSACL_MAX_ENTRIES	64
 
-bool zfsacl_set_fd(int _fd, zfsacl_t _acl);
-bool zfsacl_set_file(const char *_path_p, zfsacl_t _acl);
-bool zfsacl_set_link(const char *_path_p, zfsacl_t _acl);
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(a) ((int)(sizeof(a)/sizeof(a[0])))
+#endif
+
+/**
+  this is a warning hack. The idea is to use this everywhere that we
+  get the "discarding const" warning from gcc. That doesn't actually
+  fix the problem of course, but it means that when we do get to
+  cleaning them up we can do it by searching the code for
+  discard_const.
+
+  It also means that other error types aren't as swamped by the noise
+  of hundreds of const warnings, so we are more likely to notice when
+  we get new errors.
+
+  Please only add more uses of this macro when you find it
+  _really_ hard to fix const warnings. Our aim is to eventually use
+  this function in only a very few places.
+
+  Also, please call this via the discard_const_p() macro interface, as that
+  makes the return type safe.
+*/
+#ifndef discard_const
+#define discard_const(ptr) ((void *)((uintptr_t)(ptr)))
+#endif
+
+/** Type-safe version of discard_const */
+#ifndef discard_const_p
+#define discard_const_p(type, ptr) ((type *)discard_const(ptr))
+#endif
+
+typedef struct aclflags2name {
+	zfsacl_aclflags_t flag;
+	const char *name;
+} aclflags2name_t;
+
+typedef struct aceperms2name {
+	zfsace_permset_t perm;
+	const char *name;
+	char letter;
+} aceperms2name_t;
+
+typedef struct aceflags2name {
+	zfsace_flagset_t flag;
+	const char *name;
+	char letter;
+} aceflags2name_t;
+
+typedef struct aceswho2name {
+	zfsace_who_t who;
+	const char *name;
+} aceswho2name_t;
+
+boolean_t zfsacl_set_fd(int _fd, zfsacl_t _acl);
+boolean_t zfsacl_set_file(const char *_path_p, zfsacl_t _acl);
+boolean_t zfsacl_set_link(const char *_path_p, zfsacl_t _acl);
 
 zfsacl_t zfsacl_get_fd(int fd, zfsacl_brand_t _brand);
 zfsacl_t zfsacl_get_file(const char *_path_p, zfsacl_brand_t _brand);
 zfsacl_t zfsacl_get_link(const char *_path_p, zfsacl_brand_t _brand);
 
-bool zfsacl_is_trivial(zfsacl_t _acl, bool *trivialp);
+boolean_t zfsacl_is_trivial(zfsacl_t _acl, boolean_t *trivialp);
 
 /**
  * @brief initialize a new ZFS ACL (for setting on file)
@@ -100,9 +155,9 @@ void zfsacl_free(zfsacl_t *_acl);
  *
  * @param[in] _acl the ACL from which to get branding info
  * @param[out] _brandp the brand (ACCESS, DEFAULT, NFSV4)
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *_brandp);
+boolean_t zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *_brandp);
 
 /*
  * API to get / set ACL-wide flags
@@ -114,27 +169,27 @@ bool zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *_brandp);
  *
  * @param[in] _acl the ZFS ACL
  * @param[out] _paclflags ACL-wide flags
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *_paclflags);
+boolean_t zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *_paclflags);
 
 /**
  * @brief set ACL-wide flags
  *
  * @param[in] _acl ZFS ACL to modify
  * @param[in] _aclflags flags to set on ACL
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t _aclflags);
+boolean_t zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t _aclflags);
 
 /**
  * @brief get number of ACL entries in ACL
  *
  * @param[in] _acl the ZFS ACL
  * @param[out] _acecnt number of ACEs in ACL.
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_get_acecnt(zfsacl_t _acl, uint *_acecnt);
+boolean_t zfsacl_get_acecnt(zfsacl_t _acl, uint *_acecnt);
 
 /*
  * API to get, create, modify, and delete ACL entries
@@ -148,9 +203,9 @@ bool zfsacl_get_acecnt(zfsacl_t _acl, uint *_acecnt);
  * @param[in] _acl the ZFS ACL to modify
  * @param[in] _idx index of where to create new ACL entry
  * @param[out] _pentry new ACL entry created
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry);
+boolean_t zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry);
 
 /**
  * @brief get ACL entry at specified index
@@ -158,18 +213,18 @@ bool zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry);
  * @param[in] _acl ZFS ACL from which to get entry
  * @param[in] _idx index of ACL entry to retrieve
  * @param[out] _pentry ACL entry retrieved
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry);
+boolean_t zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry);
 
 /**
  * @brief remove ACL entry by index
  *
  * @param[in] _acl ZFS ACL from which to remove entry
  * @param[in] _idx index of ACL entry to remove
- * @return true on success, false on failure
+ * @return B_TRUE on success, B_FALSE on failure
  */
-bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx);
+boolean_t zfsacl_delete_aclentry(zfsacl_t _acl, int _idx);
 
 
 /**
@@ -180,17 +235,18 @@ bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx);
  */
 char *zfsacl_to_text(zfsacl_t _acl);
 
+boolean_t zfsacl_to_native(zfsacl_t _acl, struct native_acl *pnative);
 
 /* ACL entry specific functions */
-bool zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm);
-bool zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags);
-bool zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_paeid);
-bool zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp);
+boolean_t zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm);
+boolean_t zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags);
+boolean_t zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_paeid);
+boolean_t zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp);
 
-bool zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _perm);
-bool zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flags);
-bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _who, zfsace_id_t _aeid);
-bool zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp);
+boolean_t zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _perm);
+boolean_t zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flags);
+boolean_t zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _who, zfsace_id_t _aeid);
+boolean_t zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp);
 
 
 /*
@@ -277,65 +333,5 @@ bool zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp);
     (who != ZFSACL_USER_OBJ) && (who != ZFSACL_USER) && \
     (who != ZFSACL_GROUP_OBJ) && (who != ZFSACL_GROUP) && \
     (who != ZFSACL_EVERYONE))
-
-const struct {
-	zfsacl_aclflags_t flag;
-	const char *name;
-} aclflag2name[] = {
-	{ ZFSACL_AUTO_INHERIT, "AUTO_INHERIT" },
-	{ ZFSACL_PROTECTED, "PROTECTED" },
-	{ ZFSACL_DEFAULTED, "DEFAULTED" },
-	{ ZFSACL_IS_TRIVIAL, "ACL_IS_TRIVIAL" },
-	{ ZFSACL_IS_DIR, "IS_DIRECTORY" },
-};
-
-const struct {
-	zfsace_permset_t perm;
-	const char *name;
-	char letter;
-} aceperm2name[] = {
-	{ ZFSACE_READ_DATA, "READ_DATA", 'r' },
-	{ ZFSACE_LIST_DIRECTORY, "LIST_DIRECTORY", '\0' },
-	{ ZFSACE_WRITE_DATA, "WRITE_DATA", 'w' },
-	{ ZFSACE_ADD_FILE, "ADD_FILE", '\0' },
-	{ ZFSACE_APPEND_DATA, "APPEND_DATA", 'p' },
-	{ ZFSACE_DELETE, "DELETE", 'd' },
-	{ ZFSACE_DELETE_CHILD, "DELETE_CHILD", 'D' },
-	{ ZFSACE_ADD_SUBDIRECTORY, "ADD_SUBDIRECTORY", '\0' },
-	{ ZFSACE_READ_ATTRIBUTES, "READ_ATTRIBUTES", 'a' },
-	{ ZFSACE_WRITE_ATTRIBUTES, "WRITE_ATTRIBUTES", 'A' },
-	{ ZFSACE_READ_NAMED_ATTRS, "READ_NAMED_ATTRS", 'R' },
-	{ ZFSACE_WRITE_NAMED_ATTRS, "WRITE_NAMED_ATTRS", 'W' },
-	{ ZFSACE_READ_ACL, "READ_ACL", 'c' },
-	{ ZFSACE_WRITE_ACL, "WRITE_ACL", 'C' },
-	{ ZFSACE_WRITE_OWNER, "WRITE_OWNER", 'o' },
-	{ ZFSACE_SYNCHRONIZE, "SYNCHRONIZE", 's' },
-};
-
-const struct {
-	zfsace_flagset_t flag;
-	const char *name;
-	char letter;
-} aceflag2name[] = {
-	{ ZFSACE_FILE_INHERIT, "FILE_INHERIT", 'f' },
-	{ ZFSACE_DIRECTORY_INHERIT, "DIRECTORY_INHERIT", 'd' },
-	{ ZFSACE_INHERIT_ONLY, "INHERIT_ONLY", 'i' },
-	{ ZFSACE_NO_PROPAGATE_INHERIT, "NO_PROPAGATE_INHERIT", 'n' },
-	{ ZFSACE_INHERITED_ACE, "INHERITED", 'I' },
-};
-
-const struct {
-	zfsace_who_t who;
-	const char *name;
-} acewho2name[] = {
-	{ ZFSACL_UNDEFINED_TAG, "UNDEFINED" },
-	{ ZFSACL_USER_OBJ, "USER_OBJ" },
-	{ ZFSACL_GROUP_OBJ, "GROUP_OBJ" },
-	{ ZFSACL_EVERYONE, "EVERYONE" },
-	{ ZFSACL_USER, "USER" },
-	{ ZFSACL_GROUP, "GROUP" },
-	{ ZFSACL_OTHER, "OTHER" },
-	{ ZFSACL_MASK, "MASK" },
-};
 
 #endif /* __ZFSACL_H__ */

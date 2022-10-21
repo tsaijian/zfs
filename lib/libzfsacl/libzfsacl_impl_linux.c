@@ -2,8 +2,10 @@
 #include <arpa/inet.h>
 #include <sys/xattr.h>
 #include <assert.h>
-#include "replace.h"
-#include "zfsacl.h"
+#include "libzfsacl.h"
+#include <string.h>
+
+
 #define ACL4_MAX_ENTRIES 64
 #define ACL4_XATTR "system.nfs4_acl_xdr"
 #define ACL4_METADATA (sizeof(uint) * 2)
@@ -25,16 +27,16 @@
 #define zfsace4 zfsacl_entry
 #define ACL4BUF_TO_ACES(aclp) ((struct zfsace4 *)(aclp + 2))
 
-static bool acl_check_brand(zfsacl_t _acl, zfsacl_brand_t expected)
+static boolean_t acl_check_brand(zfsacl_t _acl, zfsacl_brand_t expected)
 {
 	if (_acl->brand != expected) {
 #if devel
 		smb_panic("Incorrect ACL brand");
 #endif
 		errno = ENOSYS;
-		return false;
+		return B_FALSE;
 	}
-	return true;
+	return B_TRUE;
 }
 
 zfsacl_t zfsacl_init(int _acecnt, zfsacl_brand_t _brand)
@@ -70,31 +72,31 @@ void zfsacl_free(zfsacl_t *_pacl)
 	*_pacl = NULL;
 }
 
-bool zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *_brandp)
+boolean_t zfsacl_get_brand(zfsacl_t _acl, zfsacl_brand_t *_brandp)
 {
 	*_brandp = _acl->brand;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *_paclflags)
+boolean_t zfsacl_get_aclflags(zfsacl_t _acl, zfsacl_aclflags_t *_paclflags)
 {
 	zfsacl_aclflags_t flags;
 
 	if (!acl_check_brand(_acl, ZFSACL_BRAND_NFSV4)) {
-		return false;
+		return B_FALSE;
 	}
 
 	flags = ntohl(*ACL4_GET_FL(_acl->aclbuf));
 	*_paclflags = flags;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t _aclflags)
+boolean_t zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t _aclflags)
 {
 	zfsacl_aclflags_t *flags;
 
 	if (!acl_check_brand(_acl, ZFSACL_BRAND_NFSV4)) {
-		return false;
+		return B_FALSE;
 	}
 
 	if (ZFSACL_FLAGS_INVALID(_aclflags)) {
@@ -102,54 +104,54 @@ bool zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t _aclflags)
 		smb_panic("Invalid aclflags");
 #endif
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	flags = ACL4_GET_FL(_acl->aclbuf);
 	*flags = htonl(_aclflags);
 
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_get_acecnt(zfsacl_t _acl, uint *pcnt)
+boolean_t zfsacl_get_acecnt(zfsacl_t _acl, uint *pcnt)
 {
 	uint acecnt;
 	if (!acl_check_brand(_acl, ZFSACL_BRAND_NFSV4)) {
-		return false;
+		return B_FALSE;
 	}
 
 	acecnt = ntohl(*ACL4_GET_CNT(_acl->aclbuf));
 	*pcnt = acecnt;
-	return true;
+	return B_TRUE;
 }
 
 
-static bool validate_entry_idx(zfsacl_t _acl, int _idx)
+static boolean_t validate_entry_idx(zfsacl_t _acl, int _idx)
 {
 	uint acecnt;
-	bool ok;
+	boolean_t ok;
 
 	ok = zfsacl_get_acecnt(_acl, &acecnt);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
-	if ((_idx + 1) > acecnt) {
+	if ((((uint)_idx) + 1) > acecnt) {
 		errno = E2BIG;
-		return false;
+		return B_FALSE;
 	}
 
-	return true;
+	return B_TRUE;
 }
 
 /* out will be set to new required size if realloc required */
-static bool acl_get_new_size(zfsacl_t _acl, uint new_count, size_t *out)
+static boolean_t acl_get_new_size(zfsacl_t _acl, uint new_count, size_t *out)
 {
 	size_t current_sz, required_sz;
 
 	if (new_count > ACL4_MAX_ENTRIES) {
 		errno = E2BIG;
-		return false;
+		return B_FALSE;
 	}
 	current_sz = _acl->aclbuf_size;
 	required_sz = ACL4SZ_FROM_ACECNT(new_count);
@@ -160,41 +162,40 @@ static bool acl_get_new_size(zfsacl_t _acl, uint new_count, size_t *out)
 		*out = required_sz;
 	}
 
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
+boolean_t zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 {
 	uint acecnt;
 	uint *pacecnt;
 	zfsacl_entry_t entry;
 	size_t new_size, new_offset, acl_size;
-	bool ok;
+	boolean_t ok;
 	struct zfsace4 *z = ACL4BUF_TO_ACES(_acl->aclbuf);
 
 	ok = zfsacl_get_acecnt(_acl, &acecnt);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
-	if ((_idx != ZFSACL_APPEND_ENTRY) && (_idx + 1 > acecnt)) {
+	if ((_idx != ZFSACL_APPEND_ENTRY) && (((uint)_idx) + 1 > acecnt)) {
 		errno = ERANGE;
-		return false;
+		return B_FALSE;
 	}
 
 	ok = acl_get_new_size(_acl, acecnt + 1, &new_size);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	acl_size = _acl->aclbuf_size;
 
 	if (new_size != 0) {
-		size_t *paclsize = NULL;
 		zfsacl_t _tmp = realloc(_acl->aclbuf, new_size);
 		if (_tmp == NULL) {
 			errno = ENOMEM;
-			return false;
+			return B_FALSE;
 		}
 		_acl->aclbuf_size = new_size;
 		assert(new_size == (acl_size + ACE4_SZ));
@@ -222,7 +223,7 @@ bool zfsacl_create_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 done:
 	pacecnt = ACL4_GET_CNT(_acl->aclbuf);
 	*pacecnt = htonl(acecnt + 1);
-	return true;
+	return B_TRUE;
 }
 
 #if devel
@@ -247,12 +248,12 @@ void dump_entry(struct zfsace4 *z)
 }
 #endif
 
-bool zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
+boolean_t zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 {
 	zfsacl_entry_t entry;
 
 	if (!validate_entry_idx(_acl, _idx)) {
-		return false;
+		return B_FALSE;
 	}
 
 	entry = ACL4_GETENTRY(_acl->aclbuf, _idx);
@@ -260,33 +261,33 @@ bool zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 #if devel
 	dump_entry(entry);
 #endif
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
+boolean_t zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
 {
 	uint acecnt;
 	uint *aclacecnt = NULL;
-	bool ok;
+	boolean_t ok;
 	struct zfsace4 *z = ACL4BUF_TO_ACES(_acl->aclbuf);
 	size_t orig_sz, after_offset;
 
 	if (!validate_entry_idx(_acl, _idx)) {
-		return false;
+		return B_FALSE;
 	}
 
 	ok = zfsacl_get_acecnt(_acl, &acecnt);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
         if (acecnt == 1) {
 		/* ACL without entries is not permitted */
 		errno = ERANGE;
-		return false;
+		return B_FALSE;
 	}
 
-	if (_idx + 1 == acecnt) {
+	if (((uint)_idx) + 1 == acecnt) {
 		memset(&z[_idx], 0, ACE4_SZ);
 	} else {
 		orig_sz = _acl->aclbuf_size;
@@ -296,7 +297,7 @@ bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
 
 	aclacecnt = ACL4_GET_CNT(_acl->aclbuf);
 	*aclacecnt = htonl(acecnt -1);
-	return true;
+	return B_TRUE;
 }
 
 #define ZFSACE_TYPE_OFFSET	0
@@ -305,35 +306,35 @@ bool zfsacl_delete_aclentry(zfsacl_t _acl, int _idx)
 #define ZFSACE_PERMSET_OFFSET	3
 #define ZFSACE_WHOID_OFFSET	4
 #define ZFSACE_SPECIAL_ID	0x00000001
-#define HAS_SPECIAL_ID(who) ((who == ZFSACE_SPECIAL_ID) ? true : false)
+#define HAS_SPECIAL_ID(who) ((who == ZFSACE_SPECIAL_ID) ? B_TRUE : B_FALSE)
 
-bool zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm)
+boolean_t zfsace_get_permset(zfsacl_entry_t _entry, zfsace_permset_t *_pperm)
 {
 	uint *entry = (uint *)_entry;
 	zfsace_permset_t perm;
 
 	perm = ntohl(*(entry + ZFSACE_PERMSET_OFFSET));
 	*_pperm = perm;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags)
+boolean_t zfsace_get_flagset(zfsacl_entry_t _entry, zfsace_flagset_t *_pflags)
 {
 	uint *entry = (uint *)_entry;
 	zfsace_flagset_t flags;
 
 	flags = ntohl(*(entry + ZFSACE_FLAGSET_OFFSET));
 	*_pflags = flags;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_paeid)
+boolean_t zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_paeid)
 {
 	struct zfsace4 *entry = (struct zfsace4 *)_entry;
 	zfsace_who_t whotype;
 	zfsace_id_t whoid;
 	zfsace_flagset_t flags;
-	bool is_special;
+	boolean_t is_special;
 
 	is_special = HAS_SPECIAL_ID(ntohl(entry->netlong[ZFSACE_WHOTYPE_OFFSET]));
 
@@ -352,46 +353,46 @@ bool zfsace_get_who(zfsacl_entry_t _entry, zfsace_who_t *pwho, zfsace_id_t *_pae
 
 	*pwho = whotype;
 	*_paeid = whoid;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp)
+boolean_t zfsace_get_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t *_tp)
 {
 	uint *entry = (uint *)_entry;
 	zfsace_entry_type_t entry_type;
 
 	entry_type = ntohl(*(entry + ZFSACE_TYPE_OFFSET));
 	*_tp = entry_type;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _perm)
+boolean_t zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _perm)
 {
 	uint *pperm = (uint *)_entry + ZFSACE_PERMSET_OFFSET;
 
 	if (ZFSACE_ACCESS_MASK_INVALID(_perm)) {
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	*pperm = htonl(_perm);
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flags)
+boolean_t zfsace_set_flagset(zfsacl_entry_t _entry, zfsace_flagset_t _flags)
 {
 	uint *pflags = (uint *)_entry + ZFSACE_FLAGSET_OFFSET;
 
 	if (ZFSACE_FLAG_INVALID(_flags)) {
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	*pflags = htonl(_flags);
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _whotype, zfsace_id_t _whoid)
+boolean_t zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _whotype, zfsace_id_t _whoid)
 {
 	struct zfsace4 *entry = (struct zfsace4 *)_entry;
 	uint *pspecial = &entry->netlong[ZFSACE_WHOTYPE_OFFSET];
@@ -420,7 +421,7 @@ bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _whotype, zfsace_id_t _w
 	case ZFSACL_USER:
 		if (_whoid == ZFSACL_UNDEFINED_ID) {
 			errno = EINVAL;
-			return false;
+			return B_FALSE;
 		}
 		whoid = _whoid;
 		special_flag = 0;
@@ -431,7 +432,7 @@ bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _whotype, zfsace_id_t _w
 	case ZFSACL_GROUP:
 		if (_whoid == ZFSACL_UNDEFINED_ID) {
 			errno = EINVAL;
-			return false;
+			return B_FALSE;
 		}
 		whoid = _whoid;
 		special_flag = 0;
@@ -441,25 +442,25 @@ bool zfsace_set_who(zfsacl_entry_t _entry, zfsace_who_t _whotype, zfsace_id_t _w
 		break;
 	default:
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	*pspecial = htonl(special_flag);
 	*pwhoid = htonl(whoid);
-	return true;
+	return B_TRUE;
 }
 
-bool zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp)
+boolean_t zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp)
 {
 	uint *ptype = (uint *)_entry + ZFSACE_TYPE_OFFSET;
 
 	if (ZFSACE_TYPE_INVALID(_tp)) {
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	*ptype = htonl(_tp);
-	return true;
+	return B_TRUE;
 }
 
 #if devel
@@ -483,7 +484,6 @@ void dump_xattr(uint *buf, size_t len)
 zfsacl_t zfsacl_get_fd(int fd, zfsacl_brand_t _brand)
 {
 	zfsacl_t out = NULL;
-	size_t acl_sz;
 	ssize_t res;
 
 	if (_brand != ZFSACL_BRAND_NFSV4) {
@@ -511,7 +511,6 @@ zfsacl_t zfsacl_get_fd(int fd, zfsacl_brand_t _brand)
 zfsacl_t zfsacl_get_file(const char *_path_p, zfsacl_brand_t _brand)
 {
 	zfsacl_t out = NULL;
-	size_t acl_sz;
 	ssize_t res;
 
 	if (_brand != ZFSACL_BRAND_NFSV4) {
@@ -539,7 +538,6 @@ zfsacl_t zfsacl_get_file(const char *_path_p, zfsacl_brand_t _brand)
 zfsacl_t zfsacl_get_link(const char *_path_p, zfsacl_brand_t _brand)
 {
 	zfsacl_t out = NULL;
-	size_t acl_sz;
 	ssize_t res;
 
 	if (_brand != ZFSACL_BRAND_NFSV4) {
@@ -564,16 +562,15 @@ zfsacl_t zfsacl_get_link(const char *_path_p, zfsacl_brand_t _brand)
 	return out;
 }
 
-static bool xatbuf_from_acl(zfsacl_t acl, char **pbuf, size_t *bufsz)
+static boolean_t xatbuf_from_acl(zfsacl_t acl, char **pbuf, size_t *bufsz)
 {
 	uint acecnt;
 	size_t calculated_acl_sz;
-	char *buf = NULL;
-	bool ok;
+	boolean_t ok;
 
 	ok = zfsacl_get_acecnt(acl, &acecnt);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	if (acecnt == 0) {
@@ -581,7 +578,7 @@ static bool xatbuf_from_acl(zfsacl_t acl, char **pbuf, size_t *bufsz)
 	}
         else if (acecnt > ACL4_MAX_ENTRIES) {
 		errno = ERANGE;
-		return false;
+		return B_FALSE;
 	}
 
 	calculated_acl_sz = ACL4SZ_FROM_ACECNT(acecnt);
@@ -590,121 +587,139 @@ static bool xatbuf_from_acl(zfsacl_t acl, char **pbuf, size_t *bufsz)
 	*pbuf = (char *)acl->aclbuf;
 
 	*bufsz = calculated_acl_sz;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_set_fd(int _fd, zfsacl_t _acl)
+boolean_t zfsacl_set_fd(int _fd, zfsacl_t _acl)
 {
 	int err;
-	bool ok;
+	boolean_t ok;
 	char *buf = NULL;
 	size_t bufsz = 0;
 
 	ok = xatbuf_from_acl(_acl, &buf, &bufsz);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	err = fsetxattr(_fd, ACL4_XATTR, buf, bufsz, 0);
 	if (err) {
-		return false;
+		return B_FALSE;
 	}
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_set_file(const char *_path_p, zfsacl_t _acl)
+boolean_t zfsacl_set_file(const char *_path_p, zfsacl_t _acl)
 {
 	int err;
-	bool ok;
+	boolean_t ok;
 	char *buf = NULL;
 	size_t bufsz = 0;
 
 	ok = xatbuf_from_acl(_acl, &buf, &bufsz);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	err = setxattr(_path_p, ACL4_XATTR, buf, bufsz, 0);
 	if (err) {
-		return false;
+		return B_FALSE;
 	}
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_set_link(const char *_path_p, zfsacl_t _acl)
+boolean_t zfsacl_set_link(const char *_path_p, zfsacl_t _acl)
 {
 	int err;
-	bool ok;
+	boolean_t ok;
 	char *buf = NULL;
 	size_t bufsz = 0;
 
 	ok = xatbuf_from_acl(_acl, &buf, &bufsz);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	err = lsetxattr(_path_p, ACL4_XATTR, buf, bufsz, 0);
 	if (err) {
-		return false;
+		return B_FALSE;
 	}
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_to_native(zfsacl_t _acl, struct native_acl *pnative)
+boolean_t zfsacl_to_native(zfsacl_t _acl, struct native_acl *pnative)
 {
 	char *to_copy = NULL;
 	char *out_buf = NULL;
 	size_t bufsz;
-	bool ok;
+	boolean_t ok;
 
 	if (pnative == NULL) {
 		errno = ENOMEM;
-		return false;
+		return B_FALSE;
 	}
 
 	ok = xatbuf_from_acl(_acl, &to_copy, &bufsz);
 	if (!ok) {
-		return false;
+		return B_FALSE;
 	}
 
 	out_buf = calloc(bufsz, sizeof(char));
 	if (out_buf == NULL) {
 		errno = ENOMEM;
-		return false;
+		return B_FALSE;
 	}
 	memcpy(out_buf, to_copy, bufsz);
 	pnative->data = out_buf;
 	pnative->datalen = bufsz;
 	pnative->brand = _acl->brand;
-	return true;
+	return B_TRUE;
 }
 
-bool zfsacl_is_trivial(zfsacl_t _acl, bool *trivialp)
+boolean_t zfsacl_is_trivial(zfsacl_t _acl, boolean_t *trivialp)
 {
 	errno = EOPNOTSUPP;
-	return false;
+	return B_FALSE;
 }
 
 #define MAX_ENTRY_LENGTH 512
 
-static bool format_perms(char *str, size_t sz, const zfsacl_entry_t entry, size_t *off)
+aceperms2name_t _aceperm2name[] = {
+	{ ZFSACE_READ_DATA, "READ_DATA", 'r' },
+	{ ZFSACE_LIST_DIRECTORY, "LIST_DIRECTORY", '\0' },
+	{ ZFSACE_WRITE_DATA, "WRITE_DATA", 'w' },
+	{ ZFSACE_ADD_FILE, "ADD_FILE", '\0' },
+	{ ZFSACE_APPEND_DATA, "APPEND_DATA", 'p' },
+	{ ZFSACE_DELETE, "DELETE", 'd' },
+	{ ZFSACE_DELETE_CHILD, "DELETE_CHILD", 'D' },
+	{ ZFSACE_ADD_SUBDIRECTORY, "ADD_SUBDIRECTORY", '\0' },
+	{ ZFSACE_READ_ATTRIBUTES, "READ_ATTRIBUTES", 'a' },
+	{ ZFSACE_WRITE_ATTRIBUTES, "WRITE_ATTRIBUTES", 'A' },
+	{ ZFSACE_READ_NAMED_ATTRS, "READ_NAMED_ATTRS", 'R' },
+	{ ZFSACE_WRITE_NAMED_ATTRS, "WRITE_NAMED_ATTRS", 'W' },
+	{ ZFSACE_READ_ACL, "READ_ACL", 'c' },
+	{ ZFSACE_WRITE_ACL, "WRITE_ACL", 'C' },
+	{ ZFSACE_WRITE_OWNER, "WRITE_OWNER", 'o' },
+	{ ZFSACE_SYNCHRONIZE, "SYNCHRONIZE", 's' },
+};
+
+static boolean_t format_perms(char *str, size_t sz, const zfsacl_entry_t entry, size_t *off)
 {
 	int i, cnt = 0;
 	zfsace_permset_t p;
 
 	if (!zfsace_get_permset(entry, &p)) {
-		return false;
+		return B_FALSE;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(aceperm2name); i++) {
-		int rv;
+	for (i = 0; i < ARRAY_SIZE(_aceperm2name); i++) {
 		char to_set;
 
-		if (aceperm2name[i].letter == '\0') {
+		if (_aceperm2name[i].letter == '\0') {
 			continue;
 		}
-		if (p & aceperm2name[i].perm) {
-			to_set = aceperm2name[i].letter;
+		if (p & _aceperm2name[i].perm) {
+			to_set = _aceperm2name[i].letter;
 		} else {
 			to_set = '-';
 		}
@@ -713,16 +728,24 @@ static bool format_perms(char *str, size_t sz, const zfsacl_entry_t entry, size_
 	}
 
 	*off += cnt;
-	return true;
+	return B_TRUE;
 }
 
-static bool format_flags(char *str, size_t sz, const zfsacl_entry_t entry, size_t *off)
+aceflags2name_t aceflag2name[] = {
+	{ ZFSACE_FILE_INHERIT, "FILE_INHERIT", 'f' },
+	{ ZFSACE_DIRECTORY_INHERIT, "DIRECTORY_INHERIT", 'd' },
+	{ ZFSACE_INHERIT_ONLY, "INHERIT_ONLY", 'i' },
+	{ ZFSACE_NO_PROPAGATE_INHERIT, "NO_PROPAGATE_INHERIT", 'n' },
+	{ ZFSACE_INHERITED_ACE, "INHERITED", 'I' },
+};
+
+static boolean_t format_flags(char *str, size_t sz, const zfsacl_entry_t entry, size_t *off)
 {
 	int i, cnt = 0;
 	zfsace_flagset_t flag;
 
 	if (!zfsace_get_flagset(entry, &flag)) {
-		return false;
+		return B_FALSE;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(aceflag2name); i++) {
@@ -742,17 +765,17 @@ static bool format_flags(char *str, size_t sz, const zfsacl_entry_t entry, size_
 	}
 
 	*off += cnt;
-	return true;
+	return B_TRUE;
 }
 
-static bool format_who(char *str, size_t sz, const zfsacl_entry_t _entry, size_t *off)
+static boolean_t format_who(char *str, size_t sz, const zfsacl_entry_t _entry, size_t *off)
 {
 	uid_t id;
 	zfsace_who_t who;
 	int cnt = 0;
 
 	if (!zfsace_get_who(_entry, &who, &id)) {
-		return false;
+		return B_FALSE;
 	}
 
 	switch (who) {
@@ -773,24 +796,24 @@ static bool format_who(char *str, size_t sz, const zfsacl_entry_t _entry, size_t
 		break;
 	default:
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	if (cnt == -1) {
-		return false;
+		return B_FALSE;
 	}
 
 	*off += cnt;
-	return true;
+	return B_TRUE;
 }
 
-static bool format_entry_type(char *str, size_t sz, const zfsacl_entry_t _entry, size_t *off)
+static boolean_t format_entry_type(char *str, size_t sz, const zfsacl_entry_t _entry, size_t *off)
 {
 	zfsace_entry_type_t entry_type;
 	int cnt = 0;
 
 	if (!zfsace_get_entry_type(_entry, &entry_type)) {
-		return false;
+		return B_FALSE;
 	}
 
 	switch (entry_type) {
@@ -808,32 +831,31 @@ static bool format_entry_type(char *str, size_t sz, const zfsacl_entry_t _entry,
 		break;
 	default:
 		errno = EINVAL;
-		return false;
+		return B_FALSE;
 	}
 
 	if (cnt == -1) {
-		return false;
+		return B_FALSE;
 	}
 
 	*off += cnt;
-	return true;
+	return B_TRUE;
 }
 
-static bool add_format_separator(char *str, size_t sz, size_t *off)
+static boolean_t add_format_separator(char *str, size_t sz, size_t *off)
 {
 	int cnt;
 
 	cnt = snprintf(str, sz, ":");
 	if (cnt == -1)
-		return false;
+		return B_FALSE;
 
 	*off += cnt;
-	return true;
+	return B_TRUE;
 }
 
 static size_t format_entry(char *str, size_t sz, const zfsacl_entry_t _entry)
 {
-	int cnt;
 	size_t off = 0;
 	char buf[MAX_ENTRY_LENGTH + 1] = { 0 };
 
@@ -889,7 +911,7 @@ char *zfsacl_to_text(zfsacl_t _acl)
 		}
 
 		written = format_entry(str + off, bufsz - off, entry);
-		if (written == -1) {
+		if (written == (size_t) -1) {
 			free(str);
 			return NULL;
 		}

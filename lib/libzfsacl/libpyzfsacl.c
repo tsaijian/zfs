@@ -1,13 +1,12 @@
 
 #include <Python.h>
-#include "replace.h"
-#include "zfsacl.h"
+#include "libzfsacl.h"
 
 #define Py_TPFLAGS_HAVE_ITER 0
 
 typedef struct {
         PyObject_HEAD
-	bool verbose;
+	boolean_t verbose;
 	zfsacl_t theacl;
 } py_acl;
 
@@ -73,7 +72,15 @@ PyTypeObject PyACLIterator = {
 	.tp_iter = PyObject_SelfIter,
 };
 
-static PyObject *aclflag_to_pylist(zfsacl_aclflags_t flags)
+aclflags2name_t aclflag2name[] = {
+	{ ZFSACL_AUTO_INHERIT, "AUTO_INHERIT" },
+	{ ZFSACL_PROTECTED, "PROTECTED" },
+	{ ZFSACL_DEFAULTED, "DEFAULTED" },
+	{ ZFSACL_IS_TRIVIAL, "ACL_IS_TRIVIAL" },
+	{ ZFSACL_IS_DIR, "IS_DIRECTORY" },
+};
+
+static inline PyObject *aclflag_to_pylist(zfsacl_aclflags_t flags)
 {
 	int i, err;
 	PyObject *out = NULL;
@@ -106,6 +113,26 @@ static PyObject *aclflag_to_pylist(zfsacl_aclflags_t flags)
 
 	return out;
 }
+
+
+aceperms2name_t aceperm2name[] = {
+	{ ZFSACE_READ_DATA, "READ_DATA", 'r' },
+	{ ZFSACE_LIST_DIRECTORY, "LIST_DIRECTORY", '\0' },
+	{ ZFSACE_WRITE_DATA, "WRITE_DATA", 'w' },
+	{ ZFSACE_ADD_FILE, "ADD_FILE", '\0' },
+	{ ZFSACE_APPEND_DATA, "APPEND_DATA", 'p' },
+	{ ZFSACE_DELETE, "DELETE", 'd' },
+	{ ZFSACE_DELETE_CHILD, "DELETE_CHILD", 'D' },
+	{ ZFSACE_ADD_SUBDIRECTORY, "ADD_SUBDIRECTORY", '\0' },
+	{ ZFSACE_READ_ATTRIBUTES, "READ_ATTRIBUTES", 'a' },
+	{ ZFSACE_WRITE_ATTRIBUTES, "WRITE_ATTRIBUTES", 'A' },
+	{ ZFSACE_READ_NAMED_ATTRS, "READ_NAMED_ATTRS", 'R' },
+	{ ZFSACE_WRITE_NAMED_ATTRS, "WRITE_NAMED_ATTRS", 'W' },
+	{ ZFSACE_READ_ACL, "READ_ACL", 'c' },
+	{ ZFSACE_WRITE_ACL, "WRITE_ACL", 'C' },
+	{ ZFSACE_WRITE_OWNER, "WRITE_OWNER", 'o' },
+	{ ZFSACE_SYNCHRONIZE, "SYNCHRONIZE", 's' },
+};
 
 static PyObject *permset_to_pylist(zfsace_permset_t perms)
 {
@@ -141,6 +168,14 @@ static PyObject *permset_to_pylist(zfsace_permset_t perms)
 	return out;
 }
 
+aceflags2name_t _aceflag2name[] = {
+	{ ZFSACE_FILE_INHERIT, "FILE_INHERIT", 'f' },
+	{ ZFSACE_DIRECTORY_INHERIT, "DIRECTORY_INHERIT", 'd' },
+	{ ZFSACE_INHERIT_ONLY, "INHERIT_ONLY", 'i' },
+	{ ZFSACE_NO_PROPAGATE_INHERIT, "NO_PROPAGATE_INHERIT", 'n' },
+	{ ZFSACE_INHERITED_ACE, "INHERITED", 'I' },
+};
+
 static PyObject *flagset_to_pylist(zfsace_flagset_t flags)
 {
 	int i, err;
@@ -150,14 +185,14 @@ static PyObject *flagset_to_pylist(zfsace_flagset_t flags)
 		return NULL;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(aceflag2name); i++) {
+	for (i = 0; i < ARRAY_SIZE(_aceflag2name); i++) {
 		PyObject *val = NULL;
 
-		if ((flags & aceflag2name[i].flag) == 0) {
+		if ((flags & _aceflag2name[i].flag) == 0) {
 			continue;
 		}
 
-		val = Py_BuildValue("s", aceflag2name[i].name);
+		val = Py_BuildValue("s", _aceflag2name[i].name);
 		if (val == NULL) {
 			Py_DECREF(out);
 			return NULL;
@@ -173,6 +208,17 @@ static PyObject *flagset_to_pylist(zfsace_flagset_t flags)
 
 	return out;
 }
+
+aceswho2name_t acewho2name[] = {
+	{ ZFSACL_UNDEFINED_TAG, "UNDEFINED" },
+	{ ZFSACL_USER_OBJ, "USER_OBJ" },
+	{ ZFSACL_GROUP_OBJ, "GROUP_OBJ" },
+	{ ZFSACL_EVERYONE, "EVERYONE" },
+	{ ZFSACL_USER, "USER" },
+	{ ZFSACL_GROUP, "GROUP" },
+	{ ZFSACL_OTHER, "OTHER" },
+	{ ZFSACL_MASK, "MASK" },
+};
 
 static PyObject *whotype_to_pystring(zfsace_who_t whotype)
 {
@@ -263,7 +309,7 @@ static PyObject *ace_get_permset(PyObject *obj, void *closure)
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
 
-	bool ok;
+	boolean_t ok;
 	zfsace_permset_t perms;
 	PyObject *out = NULL;
 
@@ -303,36 +349,36 @@ static PyObject *ace_get_permset(PyObject *obj, void *closure)
 	return out;
 }
 
-static bool parse_permset(py_acl *acl, PyObject *to_parse,
+static boolean_t parse_permset(py_acl *acl, PyObject *to_parse,
 			  zfsace_permset_t *permset)
 {
 	unsigned long py_permset;
 
 	if (!PyLong_Check(to_parse))
-		return false;
+		return B_FALSE;
 
 	py_permset = PyLong_AsUnsignedLong(to_parse);
 
-	if (py_permset == -1)
-		return false;
+	if (py_permset == (unsigned long) -1)
+		return B_FALSE;
 
 	if (ZFSACE_ACCESS_MASK_INVALID(py_permset)) {
 		PyErr_SetString(
 			PyExc_ValueError,
 			"invalid flagset."
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	*permset = (zfsace_permset_t)py_permset;
-	return true;
+	return B_TRUE;
 }
 
 static int ace_set_permset(PyObject *obj, PyObject *value, void *closure)
 {
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
-	bool ok;
+	boolean_t ok;
 	zfsace_permset_t permset;
 
 	ok = parse_permset(acl, value, &permset);
@@ -371,7 +417,7 @@ static PyObject *ace_get_flagset(PyObject *obj, void *closure)
 {
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
-	bool ok;
+	boolean_t ok;
 	zfsace_flagset_t flags;
 	PyObject *out = NULL;
 
@@ -410,36 +456,36 @@ static PyObject *ace_get_flagset(PyObject *obj, void *closure)
 	return out;
 }
 
-static bool parse_flagset(py_acl *acl, PyObject *to_parse,
+static boolean_t parse_flagset(py_acl *acl, PyObject *to_parse,
 			  zfsace_flagset_t *flagset)
 {
 	unsigned long py_flagset;
 
 	if (!PyLong_Check(to_parse))
-		return false;
+		return B_FALSE;
 
 	py_flagset = PyLong_AsUnsignedLong(to_parse);
 
-	if (py_flagset == -1)
-		return false;
+	if (py_flagset == (unsigned long) -1)
+		return B_FALSE;
 
 	if (ZFSACE_FLAG_INVALID(py_flagset)) {
 		PyErr_SetString(
 			PyExc_ValueError,
 			"invalid flagset."
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	*flagset = (zfsace_flagset_t)py_flagset;
-	return true;
+	return B_TRUE;
 }
 
 static int ace_set_flagset(PyObject *obj, PyObject *value, void *closure)
 {
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
-	bool ok;
+	boolean_t ok;
 	zfsace_flagset_t flagset;
 
 	ok = parse_flagset(acl, value, &flagset);
@@ -503,7 +549,7 @@ static PyObject *ace_get_who(PyObject *obj, void *closure)
 {
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
-	bool ok;
+	boolean_t ok;
 	zfsace_who_t whotype;
 	zfsace_id_t whoid;
 	PyObject *out = NULL;
@@ -522,20 +568,20 @@ static PyObject *ace_get_who(PyObject *obj, void *closure)
 	return out;
 }
 
-static bool parse_who(py_acl *acl, PyObject *to_parse,
+static boolean_t parse_who(py_acl *acl, PyObject *to_parse,
 		      zfsace_who_t *whotype, zfsace_id_t *whoid)
 {
 	int pywhotype, pywhoid;
 
 	if (!PyArg_ParseTuple(to_parse, "ii", &pywhotype, &pywhoid))
-		return false;
+		return B_FALSE;
 
 	if (SPECIAL_WHO_INVALID(pywhotype)) {
 		PyErr_SetString(
 			PyExc_ValueError,
 			"invalid whotype."
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	if ((pywhoid < 0) && (pywhoid != -1)) {
@@ -543,7 +589,7 @@ static bool parse_who(py_acl *acl, PyObject *to_parse,
 			PyExc_ValueError,
 			"invalid id"
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	if ((pywhoid == -1) &&
@@ -552,7 +598,7 @@ static bool parse_who(py_acl *acl, PyObject *to_parse,
 			PyExc_ValueError,
 			"-1 is invalid ID for named entries."
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	if (pywhoid > INT32_MAX) {
@@ -560,13 +606,13 @@ static bool parse_who(py_acl *acl, PyObject *to_parse,
 			PyExc_ValueError,
 			"ID for named entry is too large."
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	*whotype = (zfsace_who_t)pywhotype;
 	*whoid = (zfsace_id_t)pywhoid;
 
-	return true;
+	return B_TRUE;
 }
 
 static int ace_set_who(PyObject *obj, PyObject *value, void *closure)
@@ -575,7 +621,7 @@ static int ace_set_who(PyObject *obj, PyObject *value, void *closure)
         py_acl *acl = self->parent_acl;
 	zfsace_who_t whotype;
 	zfsace_id_t whoid;
-	bool ok;
+	boolean_t ok;
 
 	ok = parse_who(acl, value, &whotype, &whoid);
 	if (!ok) {
@@ -594,7 +640,7 @@ static PyObject *ace_get_entry_type(PyObject *obj, void *closure)
 {
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
-	bool ok;
+	boolean_t ok;
 	zfsace_entry_type_t entry_type;
 	PyObject *out = NULL;
 
@@ -633,36 +679,36 @@ static PyObject *ace_get_entry_type(PyObject *obj, void *closure)
 	return out;
 }
 
-static bool parse_entry_type(py_acl *acl, PyObject *to_parse,
+static boolean_t parse_entry_type(py_acl *acl, PyObject *to_parse,
 			     zfsace_entry_type_t *entry_type)
 {
 	unsigned long py_entry_type;
 
 
 	if (!PyLong_Check(to_parse))
-		return false;
+		return B_FALSE;
 	py_entry_type = PyLong_AsUnsignedLong(to_parse);
 
-	if (py_entry_type == -1)
-		return false;
+	if (py_entry_type == (unsigned long) -1)
+		return B_FALSE;
 
 	if (ZFSACE_TYPE_INVALID(py_entry_type)) {
 		PyErr_SetString(
 			PyExc_ValueError,
 			"invalid ACL entry type."
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	*entry_type = (zfsace_entry_type_t)py_entry_type;
-	return true;
+	return B_TRUE;
 }
 
 static int ace_set_entry_type(PyObject *obj, PyObject *value, void *closure)
 {
 	py_acl_entry *self = (py_acl_entry *)obj;
         py_acl *acl = self->parent_acl;
-	bool ok;
+	boolean_t ok;
 	zfsace_entry_type_t entry_type;
 
 	ok = parse_entry_type(acl, value, &entry_type);
@@ -740,7 +786,7 @@ static PyObject *py_acl_new(PyTypeObject *obj,
 		return NULL;
 	}
 	self->theacl = NULL;
-	self->verbose = false;
+	self->verbose = B_FALSE;
 	return (PyObject *)self;
 }
 
@@ -750,10 +796,9 @@ static int py_acl_init(PyObject *obj,
 {
 	py_acl *self = (py_acl *)obj;
 	zfsacl_t theacl = NULL;
-	const char *kwnames [] = { "fd", "path", "brand", NULL };
+	char *kwnames[] = { "fd", "path", "brand", NULL };
 	int fd = 0, brand = ZFSACL_BRAND_NFSV4;
 	char *path = NULL;
-	char *aclbrand = NULL;
 
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|isi",
 					 kwnames, &fd, &path, &brand)) {
@@ -822,14 +867,14 @@ static int acl_set_verbose(PyObject *obj, PyObject *value, void *closure)
 		return -1;
 	}
 
-	self->verbose = (value == Py_True) ? true : false;
+	self->verbose = (value == Py_True) ? B_TRUE : B_FALSE;
 	return 0;
 }
 
 static PyObject *acl_get_flags(PyObject *obj, void *closure)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	zfsacl_aclflags_t flags;
 	PyObject *out = NULL;
 
@@ -847,8 +892,7 @@ static int acl_set_flags(PyObject *obj, PyObject *value, void *closure)
 {
 	py_acl *self = (py_acl *)obj;
 	long val;
-	zfsacl_aclflags_t flags;
-	bool ok;
+	boolean_t ok;
 
 	if (!PyLong_Check(value)) {
 		PyErr_SetString(
@@ -880,7 +924,7 @@ static int acl_set_flags(PyObject *obj, PyObject *value, void *closure)
 static PyObject *acl_get_brand(PyObject *obj, void *closure)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	zfsacl_brand_t brand;
 	PyObject *out = NULL;
 
@@ -897,7 +941,7 @@ static PyObject *acl_get_brand(PyObject *obj, void *closure)
 static PyObject *acl_get_acecnt(PyObject *obj, void *closure)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	uint acecnt;
 	PyObject *out = NULL;
 
@@ -911,19 +955,19 @@ static PyObject *acl_get_acecnt(PyObject *obj, void *closure)
 	return out;
 }
 
-static bool initialize_py_ace(py_acl *self,
+static boolean_t initialize_py_ace(py_acl *self,
 			      PyObject *in,
 			      int idx,
 			      zfsacl_entry_t entry)
 {
 	py_acl_entry *out = (py_acl_entry *)in;
-	bool ok;
+	boolean_t ok;
 	uint acecnt;
 
 	ok = zfsacl_get_acecnt(self->theacl, &acecnt);
 	if (!ok) {
 		set_exc_from_errno("zfsacl_get_acecnt()");
-		return false;
+		return B_FALSE;
 	}
 
 	out->theace = entry;
@@ -931,26 +975,26 @@ static bool initialize_py_ace(py_acl *self,
 	out->initial_cnt = acecnt;
 	out->idx = (idx == ZFSACL_APPEND_ENTRY) ? (int)acecnt : idx;
 	Py_INCREF(out->parent_acl);
-	return true;
+	return B_TRUE;
 }
 
-static bool pyargs_get_index(py_acl *self, PyObject *args, int *pidx, bool required)
+static boolean_t pyargs_get_index(py_acl *self, PyObject *args, int *pidx, boolean_t required)
 {
 	int val = -1;
-	bool ok;
+	boolean_t ok;
 	uint acecnt;
 	const char *format = required ? "i" : "|i";
 
 	if (!PyArg_ParseTuple(args, format, &val))
-		return false;
+		return B_FALSE;
 
 	if (val == -1) {
 		*pidx = ZFSACL_APPEND_ENTRY;
-		return true;
+		return B_TRUE;
 	}
 	else if (val == 0) {
 		*pidx = 0;
-		return true;
+		return B_TRUE;
 	}
 
 	if (val < 0) {
@@ -958,7 +1002,7 @@ static bool pyargs_get_index(py_acl *self, PyObject *args, int *pidx, bool requi
 			PyExc_ValueError,
 			"Index may not be negative"
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	if (val > (ZFSACL_MAX_ENTRIES -1)) {
@@ -966,22 +1010,22 @@ static bool pyargs_get_index(py_acl *self, PyObject *args, int *pidx, bool requi
 			PyExc_ValueError,
 			"Index exceeds maximum entries for ACL"
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	ok = zfsacl_get_acecnt(self->theacl, &acecnt);
 	if (!ok) {
 		set_exc_from_errno("zfsacl_get_acecnt()");
-		return false;
+		return B_FALSE;
 	}
 
-	if ((acecnt == 0) || (val > acecnt -1)) {
+	if ((acecnt == 0) || (((uint)val) > acecnt -1)) {
 		PyErr_Format(
 			PyExc_IndexError,
 			"%ld: index invalid, ACL contains (%u) entries.",
 			val, acecnt
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	if (val > (ZFSACL_MAX_ENTRIES -1)) {
@@ -989,22 +1033,22 @@ static bool pyargs_get_index(py_acl *self, PyObject *args, int *pidx, bool requi
 			PyExc_ValueError,
 			"Index exceeds maximum entries for ACL"
 		);
-		return false;
+		return B_FALSE;
 	}
 
 	*pidx = val;
-	return true;
+	return B_TRUE;
 }
 
 static PyObject *py_acl_create_entry(PyObject *obj, PyObject *args)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	int idx;
 	zfsacl_entry_t entry = NULL;
 	PyObject *pyentry = NULL;
 
-	ok = pyargs_get_index(self, args, &idx, false);
+	ok = pyargs_get_index(self, args, &idx, B_FALSE);
 	if (!ok) {
 		return NULL;
 	}
@@ -1028,12 +1072,12 @@ static PyObject *py_acl_create_entry(PyObject *obj, PyObject *args)
 static PyObject *py_acl_get_entry(PyObject *obj, PyObject *args)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	int idx;
 	zfsacl_entry_t entry = NULL;
 	PyObject *pyentry = NULL;
 
-	ok = pyargs_get_index(self, args, &idx, true);
+	ok = pyargs_get_index(self, args, &idx, B_TRUE);
 	if (!ok) {
 		return NULL;
 	}
@@ -1057,10 +1101,10 @@ static PyObject *py_acl_get_entry(PyObject *obj, PyObject *args)
 static PyObject *py_acl_delete_entry(PyObject *obj, PyObject *args)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	int idx;
 
-	ok = pyargs_get_index(self, args, &idx, true);
+	ok = pyargs_get_index(self, args, &idx, B_TRUE);
 	if (!ok) {
 		return NULL;
 	}
@@ -1084,10 +1128,10 @@ static PyObject *py_acl_delete_entry(PyObject *obj, PyObject *args)
 static PyObject *py_acl_set(PyObject *obj, PyObject *args, PyObject *kwargs)
 {
 	py_acl *self = (py_acl *)obj;
-	bool ok;
+	boolean_t ok;
 	int fd = -1;
 	const char *path = NULL;
-	const char *kwnames [] = { "fd", "path", NULL };
+	char *kwnames [] = { "fd", "path", NULL };
 
 	ok = PyArg_ParseTupleAndKeywords(
 		args, kwargs, "|is", kwnames, &fd, &path
@@ -1141,7 +1185,7 @@ static PyObject *py_native_data(PyObject *obj, PyObject *args, PyObject *kwargs)
 	py_acl *self = (py_acl *)obj;
 	PyObject *out =NULL;
 	struct native_acl native;
-	bool ok;
+	boolean_t ok;
 
 	ok = zfsacl_to_native(self->theacl, &native);
 	if (!ok) {

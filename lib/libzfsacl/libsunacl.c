@@ -27,9 +27,10 @@
 
 #include <arpa/inet.h>
 #include <assert.h>
-#include "replace.h"
-#include "zfsacl.h"
+#include "libzfsacl.h"
 #include "sunacl.h"
+#include <string.h>
+
 
 #define ACE_GETACL              4
 #define ACE_SETACL              5
@@ -40,7 +41,7 @@ acl_from_aces(zfsacl_t aclp, const ace_t *aces, int nentries)
 {
 	int i;
 	const ace_t *ace = NULL;
-	bool ok;
+	boolean_t ok;
 
 	if (nentries > ZFSACL_MAX_ENTRIES) {
 		/*
@@ -134,14 +135,14 @@ aces_from_acl(ace_t *aces, int *nentries, zfsacl_t aclp)
 	int i;
 	uint acecnt;
 	ace_t *ace;
-	bool ok;
+	boolean_t ok;
 
 	ok = zfsacl_get_acecnt(aclp, &acecnt);
 	if (!ok) {
 		return (errno);
 	}
 
-	bzero(aces, sizeof(*aces) * acecnt);
+	memset(aces, 0, sizeof(*aces) * acecnt);
 	*nentries = (int)acecnt;
 
 	for (i = 0; i < (int)acecnt; i++) {
@@ -214,9 +215,8 @@ xacl(const char *path, int fd, int cmd, int cnt, void *buf)
 {
 	int error, nentries;
 	zfsacl_t aclp = NULL;
-	zfsacl_brand_t brand;
 	uint acecnt;
-	bool ok;
+	boolean_t ok;
 
 	switch (cmd) {
 	case ACE_SETACL:
@@ -277,7 +277,7 @@ xacl(const char *path, int fd, int cmd, int cnt, void *buf)
 		}
 
 		ok = zfsacl_get_acecnt(aclp, &acecnt);
-		if (!ok || acecnt > cnt) {
+		if (!ok || acecnt > (uint) cnt) {
 			zfsacl_free(&aclp);
 			errno = ENOSPC;
 			return (-1);
