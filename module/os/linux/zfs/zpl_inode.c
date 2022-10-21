@@ -24,6 +24,7 @@
  */
 
 
+#include <sys/sysmacros.h>
 #include <sys/zfs_ctldir.h>
 #include <sys/zfs_vfsops.h>
 #include <sys/zfs_vnops.h>
@@ -474,32 +475,39 @@ static int
 #ifdef HAVE_IOPS_RENAME_USERNS
 zpl_rename2(struct user_namespace *user_ns, struct inode *sdip,
     struct dentry *sdentry, struct inode *tdip, struct dentry *tdentry,
-    unsigned int flags)
+    unsigned int rflags)
 #else
 zpl_rename2(struct inode *sdip, struct dentry *sdentry,
-    struct inode *tdip, struct dentry *tdentry, unsigned int flags)
+    struct inode *tdip, struct dentry *tdentry, unsigned int rflags)
 #endif
 {
 	cred_t *cr = CRED();
+	vattr_t *wo_vap = NULL;
 	int error;
 	fstrans_cookie_t cookie;
 
-	/* We don't have renameat2(2) support */
-	if (flags)
-		return (-EINVAL);
-
 	crhold(cr);
+	if (rflags & RENAME_WHITEOUT) {
+		wo_vap = kmem_zalloc(sizeof (vattr_t), KM_SLEEP);
+		zpl_vap_init(wo_vap, sdip, S_IFCHR, cr);
+		wo_vap->va_rdev = makedevice(0, 0);
+	}
+
 	cookie = spl_fstrans_mark();
 	error = -zfs_rename(ITOZ(sdip), dname(sdentry), ITOZ(tdip),
-	    dname(tdentry), cr, 0);
+			    dname(tdentry), cr, 0, rflags, wo_vap);
 	spl_fstrans_unmark(cookie);
+	if (wo_vap)
+		kmem_free(wo_vap, sizeof (vattr_t));
 	crfree(cr);
 	ASSERT3S(error, <=, 0);
 
 	return (error);
 }
 
-#if !defined(HAVE_RENAME_WANTS_FLAGS) && !defined(HAVE_IOPS_RENAME_USERNS)
+#if !defined(HAVE_IOPS_RENAME_USERNS) && \
+	!defined(HAVE_RENAME_WANTS_FLAGS) && \
+	!defined(HAVE_RENAME2)
 static int
 zpl_rename(struct inode *sdip, struct dentry *sdentry,
     struct inode *tdip, struct dentry *tdentry)
@@ -698,46 +706,6 @@ out:
 	return (error);
 }
 
-static int
-#ifdef HAVE_D_REVALIDATE_NAMEIDATA
-zpl_revalidate(struct dentry *dentry, struct nameidata *nd)
-{
-	unsigned int flags = (nd ? nd->flags : 0);
-#else
-zpl_revalidate(struct dentry *dentry, unsigned int flags)
-{
-#endif /* HAVE_D_REVALIDATE_NAMEIDATA */
-	/* CSTYLED */
-	zfsvfs_t *zfsvfs = dentry->d_sb->s_fs_info;
-	int error;
-
-	if (flags & LOOKUP_RCU)
-		return (-ECHILD);
-
-	/*
-	 * After a rollback negative dentries created before the rollback
-	 * time must be invalidated.  Otherwise they can obscure files which
-	 * are only present in the rolled back dataset.
-	 */
-	if (dentry->d_inode == NULL) {
-		spin_lock(&dentry->d_lock);
-		error = time_before(dentry->d_time, zfsvfs->z_rollback_time);
-		spin_unlock(&dentry->d_lock);
-
-		if (error)
-			return (0);
-	}
-
-	/*
-	 * The dentry may reference a stale inode if a mounted file system
-	 * was rolled back to a point in time where the object didn't exist.
-	 */
-	if (dentry->d_inode && ITOZ(dentry->d_inode)->z_is_stale)
-		return (0);
-
-	return (1);
-}
-
 const struct inode_operations zpl_inode_operations = {
 	.setattr	= zpl_setattr,
 	.getattr	= zpl_getattr,
@@ -756,7 +724,12 @@ const struct inode_operations zpl_inode_operations = {
 	.permission	= zpl_permission,
 };
 
+#ifdef HAVE_RENAME2_OPERATIONS_WRAPPER
+const struct inode_operations_wrapper zpl_dir_inode_operations = {
+	.ops = {
+#else
 const struct inode_operations zpl_dir_inode_operations = {
+#endif
 	.create		= zpl_create,
 	.lookup		= zpl_lookup,
 	.link		= zpl_link,
@@ -765,7 +738,9 @@ const struct inode_operations zpl_dir_inode_operations = {
 	.mkdir		= zpl_mkdir,
 	.rmdir		= zpl_rmdir,
 	.mknod		= zpl_mknod,
-#if defined(HAVE_RENAME_WANTS_FLAGS) || defined(HAVE_IOPS_RENAME_USERNS)
+#ifdef HAVE_RENAME2
+	.rename2	= zpl_rename2,
+#elif defined(HAVE_RENAME_WANTS_FLAGS) || defined(HAVE_IOPS_RENAME_USERNS)
 	.rename		= zpl_rename2,
 #else
 	.rename		= zpl_rename,
@@ -788,6 +763,10 @@ const struct inode_operations zpl_dir_inode_operations = {
 	.get_acl	= zpl_get_acl,
 #endif /* CONFIG_FS_POSIX_ACL */
 	.permission	= zpl_permission,
+#ifdef HAVE_RENAME2_OPERATIONS_WRAPPER
+	},
+	.rename2	= zpl_rename2,
+#endif
 };
 
 const struct inode_operations zpl_symlink_inode_operations = {
@@ -828,8 +807,4 @@ const struct inode_operations zpl_special_inode_operations = {
 	.get_acl	= zpl_get_acl,
 #endif /* CONFIG_FS_POSIX_ACL */
 	.permission	= zpl_permission,
-};
-
-dentry_operations_t zpl_dentry_operations = {
-	.d_revalidate	= zpl_revalidate,
 };
