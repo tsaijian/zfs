@@ -881,7 +881,7 @@ static size_t format_entry(char *str, size_t sz, const zfsacl_entry_t _entry)
 		return -1;
 
 	buf[off] = '\n';
-	return strlcpy(str, buf, sz);
+	return strncpy(str, buf, sz);
 }
 
 char *zfsacl_to_text(zfsacl_t _acl)
