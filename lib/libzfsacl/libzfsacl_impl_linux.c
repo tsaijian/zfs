@@ -30,8 +30,8 @@
 static boolean_t acl_check_brand(zfsacl_t _acl, zfsacl_brand_t expected)
 {
 	if (_acl->brand != expected) {
-#if devel
-		smb_panic("Incorrect ACL brand");
+#if ZFS_DEBUG
+		(void)fprintf(stderr, "Incorrect ACL brand");
 #endif
 		errno = ENOSYS;
 		return B_FALSE;
@@ -100,8 +100,8 @@ boolean_t zfsacl_set_aclflags(zfsacl_t _acl, zfsacl_aclflags_t _aclflags)
 	}
 
 	if (ZFSACL_FLAGS_INVALID(_aclflags)) {
-#if devel
-		smb_panic("Invalid aclflags");
+#if ZFS_DEBUG
+		(void)fprintf(stderr, "Incorrect ACL brand");
 #endif
 		errno = EINVAL;
 		return B_FALSE;
@@ -226,7 +226,7 @@ done:
 	return B_TRUE;
 }
 
-#if devel
+#if ZFS_DEBUG
 void dump_entry(struct zfsace4 *z)
 {
 	fprintf(stderr,
@@ -258,7 +258,7 @@ boolean_t zfsacl_get_aclentry(zfsacl_t _acl, int _idx, zfsacl_entry_t *_pentry)
 
 	entry = ACL4_GETENTRY(_acl->aclbuf, _idx);
 	*_pentry = entry;
-#if devel
+#if ZFS_DEBUG
 	dump_entry(entry);
 #endif
 	return B_TRUE;
@@ -463,7 +463,7 @@ boolean_t zfsace_set_entry_type(zfsacl_entry_t _entry, zfsace_entry_type_t _tp)
 	return B_TRUE;
 }
 
-#if devel
+#if ZFS_DEBUG
 void dump_xattr(uint *buf, size_t len)
 {
         size_t i;
@@ -501,7 +501,7 @@ zfsacl_t zfsacl_get_fd(int fd, zfsacl_brand_t _brand)
 		zfsacl_free(&out);
 		return NULL;
 	}
-#if devel
+#if ZFS_DEBUG
 	dump_xattr(out->aclbuf, out->aclbuf_size);
 #endif
 
@@ -528,7 +528,7 @@ zfsacl_t zfsacl_get_file(const char *_path_p, zfsacl_brand_t _brand)
 		zfsacl_free(&out);
 		return NULL;
 	}
-#if devel
+#if ZFS_DEBUG
 	dump_xattr(out->aclbuf, out->aclbuf_size);
 #endif
 
@@ -556,7 +556,7 @@ zfsacl_t zfsacl_get_link(const char *_path_p, zfsacl_brand_t _brand)
 		return NULL;
 	}
 
-#if devel
+#if ZFS_DEBUG
 	dump_xattr(out->aclbuf, out->aclbuf_size);
 #endif
 	return out;
