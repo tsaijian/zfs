@@ -2,6 +2,7 @@
 #define __ZFSACL_H__
 
 #include <sys/stdtypes.h>
+#include <string.h>
 #include <errno.h>
 
 /*

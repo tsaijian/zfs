@@ -3,7 +3,6 @@
 #include <sys/xattr.h>
 #include <assert.h>
 #include "libzfsacl.h"
-#include <string.h>
 
 
 #define ACL4_MAX_ENTRIES 64
@@ -881,7 +880,7 @@ static size_t format_entry(char *str, size_t sz, const zfsacl_entry_t _entry)
 		return -1;
 
 	buf[off] = '\n';
-	return strncpy(str, buf, sz);
+	return strlcpy(str, buf, sz);
 }
 
 char *zfsacl_to_text(zfsacl_t _acl)
