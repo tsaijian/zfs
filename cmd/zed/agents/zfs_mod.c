@@ -968,7 +968,7 @@ zfsdle_vdev_online(zpool_handle_t *zhp, void *data)
 	nvlist_t *tgt;
 	int error;
 
-	char *tmp_devname, devname[MAXPATHLEN];
+	char *tmp_devname, devname[MAXPATHLEN] = "";
 	uint64_t guid;
 
 	if (nvlist_lookup_uint64(udev_nvl, ZFS_EV_VDEV_GUID, &guid) == 0) {
@@ -1126,6 +1126,7 @@ zfs_deliver_dle(nvlist_t *nvl)
 		strlcpy(name, devname, MAXPATHLEN);
 		zfs_append_partition(name, MAXPATHLEN);
 	} else {
+		sprintf(name, "unknown");
 		zed_log_msg(LOG_INFO, "zfs_deliver_dle: no guid or physpath");
 	}
 
@@ -1215,7 +1216,7 @@ zfs_enum_pools(void *arg)
  * For now, each agent has its own libzfs instance
  */
 int
-zfs_slm_init()
+zfs_slm_init(void)
 {
 	if ((g_zfshdl = libzfs_init()) == NULL)
 		return (-1);
@@ -1241,7 +1242,7 @@ zfs_slm_init()
 }
 
 void
-zfs_slm_fini()
+zfs_slm_fini(void)
 {
 	unavailpool_t *pool;
 	pendingdev_t *device;
