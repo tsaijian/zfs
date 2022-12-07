@@ -1,3 +1,17 @@
+openzfs (2.1.7-0) unstable; urgency=medium
+
+  * Merge tag zfs-2.1.7
+  * Expose libzutil error info in libpc_handle_t
+  * Build packages with debug symbols
+  * Add support for overlayfs for docker
+  * Optimize microzaps
+  * zed: Avoid core dump if wholedisk property does not exist
+  * zed: post a udev change event from spa_vdev_attach()
+  * SCALE: ignore wholedisk
+  * Skip trivial permission checks on xattrs for POSIX ACL type
+
+ -- Ryan Moeller <ryan@ixsystems.com>  Wed, 07 Dec 2022 16:00:00 -0500
+
 openzfs (2.1.6-0) unstable; urgency=medium
 
   * Merge tag zfs-2.1.6
