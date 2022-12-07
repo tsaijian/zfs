@@ -1,6 +1,7 @@
 #ifndef __ZFSACL_H__
 #define __ZFSACL_H__
 
+#include <zfs_config.h>
 #include <sys/stdtypes.h>
 #include <string.h>
 #include <errno.h>
