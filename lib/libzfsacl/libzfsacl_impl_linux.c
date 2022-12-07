@@ -474,7 +474,7 @@ void dump_xattr(uint *buf, size_t len)
                 if (((i -2) % 5) == 0) {
                         fprintf(stderr, "\n");
                 }
-                fprintf(stderr, "off: %d, 0x%08x, ptr: %p\n",
+                fprintf(stderr, "off: %ld, 0x%08x, ptr: %p\n",
                         i, ntohl(buf[i]), &buf[i]);
         }
 }
