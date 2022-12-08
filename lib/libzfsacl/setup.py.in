@@ -1,4 +1,4 @@
-from distutils.core import setup, Extension
+from setuptools import setup, Extension
 import os
 
 topsrcdir = "@abs_top_srcdir@"
@@ -12,7 +12,7 @@ libzfsacl_mod = Extension('libzfsacl',
                     define_macros = [('MAJOR_VERSION', '0'),
                                      ('MINOR_VERSION', '1')],
                     include_dirs = [relpath_topsrcdir, relpath_stdtypes],
-                    extra_objects = [relpath_libs + "/libspl.a"],
+                    extra_objects = [abspath_libs + "/libspl.a"],
                     sources = ['libzfsacl_impl_linux.c', 'libpyzfsacl.c', 
                                'libsunacl.c'])
 

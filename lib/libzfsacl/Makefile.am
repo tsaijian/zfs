@@ -1,3 +1,11 @@
+dist_noinst_DATA += \
+	%D%/sunacl.h \
+	%D%/libzfsacl.h \
+	%D%/libpyzfsacl.c \
+	%D%/libsunacl.c \
+	%D%/libzfsacl_impl_freebsd.c \
+	%D%/libzfsacl_impl_linux.c
+
 SUBSTFILES += %D%/setup.py
 
 ALL_LOCAL += libzfsacl-all-local
