@@ -9,15 +9,16 @@ dist_noinst_DATA += \
 SUBSTFILES += %D%/setup.py
 
 ALL_LOCAL += libzfsacl-all-local
-libzfsacl-all-local: %D%/setup.py
-	cd %D% && $(PYTHON) setup.py build
+libzfsacl-all-local: %D%/setup.py lib
+	cd %D% && $(PYTHON) setup.py egg_info -e . build
 
 INSTALL_DATA_HOOKS += libzfsacl-install-data-hook
 libzfsacl-install-data-hook:
-	cd %D% && $(PYTHON) setup.py install \
+	cd %D% && $(PYTHON) setup.py egg_info -e . install \
 	  --prefix $(prefix) \
 	  --root $(DESTDIR)/ \
-	  --install-lib $(pythonsitedir)
+	  --install-lib $(pythonsitedir) \
+	  --verbose
 
 CLEAN_LOCAL += libzfsacl-clean-local
 libzfsacl-clean-local:
