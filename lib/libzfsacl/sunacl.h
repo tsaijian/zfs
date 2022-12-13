@@ -1,4 +1,4 @@
-/*-
+/*
  * Copyright (c) 2008, 2009 Edward Tomasz Napierała <trasz@FreeBSD.org>
  * Copyright (c) 2022 Andrew Walker <awalker@ixsystems.com>
  * All rights reserved.

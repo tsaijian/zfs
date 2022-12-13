@@ -11,19 +11,19 @@ abspath_libs = topsrcdir + '/.libs'
 relpath_libs = os.path.relpath(abspath_libs)
 
 libzfsacl_mod = Extension('libzfsacl',
-                    include_dirs = [relpath_topsrcdir, relpath_stdtypes],
-                    extra_objects = [relpath_libs + '/libspl.a'],
-                    sources = ['libzfsacl_impl_linux.c', 'libpyzfsacl.c', 
-                               'libsunacl.c'])
+                          include_dirs=[relpath_topsrcdir, relpath_stdtypes],
+                          extra_objects=[relpath_libs + '/libspl.a'],
+                          sources=['libzfsacl_impl_linux.c', 'libpyzfsacl.c',
+                                   'libsunacl.c'])
 
-setup (
-       name = 'libzfsacl',
-       version = '@VERSION@',
-       description = 'libzfsacl lib',
-       author = 'iXsystems Inc.',
-       author_email = 'dev@ixsystems.com',
-       url = 'https://docs.python.org/extending/building',
-       ext_modules = [libzfsacl_mod],
+setup(
+       name='libzfsacl',
+       version='@VERSION@',
+       description='libzfsacl lib',
+       author='iXsystems Inc.',
+       author_email='dev@ixsystems.com',
+       url='https://docs.python.org/extending/building',
+       ext_modules=[libzfsacl_mod],
        packages=find_packages(where=srcdir),
        package_dir={"": os.path.relpath(srcdir)},
        include_package_data=True,
