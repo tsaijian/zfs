@@ -225,11 +225,16 @@ zpl_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 
 #ifdef HAVE_TMPFILE
 static int
+#ifndef HAVE_TMPFILE_DENTRY
+zpl_tmpfile(struct user_namespace *userns, struct inode *dir,
+    struct file *file, umode_t mode)
+#else
 #ifdef HAVE_TMPFILE_USERNS
 zpl_tmpfile(struct user_namespace *userns, struct inode *dir,
     struct dentry *dentry, umode_t mode)
 #else
 zpl_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
+#endif
 #endif
 {
 	cred_t *cr = CRED();
@@ -253,11 +258,21 @@ zpl_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
 	if (error == 0) {
 		/* d_tmpfile will do drop_nlink, so we should set it first */
 		set_nlink(ip, 1);
+#ifndef HAVE_TMPFILE_DENTRY
+		d_tmpfile(file, ip);
+
+		error = zpl_xattr_security_init(ip, dir,
+		    &file->f_path.dentry->d_name);
+#else
 		d_tmpfile(dentry, ip);
 
 		error = zpl_xattr_security_init(ip, dir, &dentry->d_name);
+#endif
 		if (error == 0)
 			error = zpl_init_acl(ip, dir);
+#ifndef HAVE_TMPFILE_DENTRY
+		error = finish_open_simple(file, error);
+#endif
 		/*
 		 * don't need to handle error here, file is already in
 		 * unlinked set.
@@ -719,7 +734,11 @@ const struct inode_operations zpl_inode_operations = {
 #if defined(HAVE_SET_ACL)
 	.set_acl	= zpl_set_acl,
 #endif /* HAVE_SET_ACL */
+#if defined(HAVE_GET_INODE_ACL)
+	.get_inode_acl	= zpl_get_acl,
+#else
 	.get_acl	= zpl_get_acl,
+#endif /* HAVE_GET_INODE_ACL */
 #endif /* CONFIG_FS_POSIX_ACL */
 	.permission	= zpl_permission,
 };
@@ -760,7 +779,11 @@ const struct inode_operations zpl_dir_inode_operations = {
 #if defined(HAVE_SET_ACL)
 	.set_acl	= zpl_set_acl,
 #endif /* HAVE_SET_ACL */
+#if defined(HAVE_GET_INODE_ACL)
+	.get_inode_acl	= zpl_get_acl,
+#else
 	.get_acl	= zpl_get_acl,
+#endif /* HAVE_GET_INODE_ACL */
 #endif /* CONFIG_FS_POSIX_ACL */
 	.permission	= zpl_permission,
 #ifdef HAVE_RENAME2_OPERATIONS_WRAPPER
@@ -804,7 +827,11 @@ const struct inode_operations zpl_special_inode_operations = {
 #if defined(HAVE_SET_ACL)
 	.set_acl	= zpl_set_acl,
 #endif /* HAVE_SET_ACL */
+#if defined(HAVE_GET_INODE_ACL)
+	.get_inode_acl	= zpl_get_acl,
+#else
 	.get_acl	= zpl_get_acl,
+#endif /* HAVE_GET_INODE_ACL */
 #endif /* CONFIG_FS_POSIX_ACL */
 	.permission	= zpl_permission,
 };

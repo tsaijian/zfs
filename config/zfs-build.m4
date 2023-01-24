@@ -173,7 +173,7 @@ AC_DEFUN([ZFS_AC_DEBUG_KMEM_TRACKING], [
 ])
 
 AC_DEFUN([ZFS_AC_DEBUG_INVARIANTS_DETECT_FREEBSD], [
-	AS_IF([sysctl -n kern.conftxt | fgrep -qx $'options\tINVARIANTS'],
+	AS_IF([sysctl -n kern.conftxt | grep -Fqx $'options\tINVARIANTS'],
 		[enable_invariants="yes"],
 		[enable_invariants="no"])
 ])
@@ -450,6 +450,7 @@ AC_DEFUN([ZFS_AC_DPKG], [
 	AC_SUBST(HAVE_DPKGBUILD)
 	AC_SUBST(DPKGBUILD)
 	AC_SUBST(DPKGBUILD_VERSION)
+	AC_SUBST([CFGOPTS], ["$CFGOPTS"])
 ])
 
 dnl #
