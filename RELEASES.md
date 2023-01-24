@@ -35,3 +35,4 @@ Two release branches are maintained for OpenZFS, they are:
     kernels.  When a new MINOR release is tagged the previous MINOR release
     will no longer be maintained (unless it is an LTS release). New MINOR
     releases are planned to occur roughly annually.
+
