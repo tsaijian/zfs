@@ -1,3 +1,9 @@
+openzfs (2.1.8-0) unstable; urgency=medium
+
+  * Merge tag zfs-2.1.8
+
+ -- Ryan Moeller <ryan@ixsystems.com>  Fri, 20 Jan 2023 12:30:00 -0500
+
 openzfs (2.1.7-0) unstable; urgency=medium
 
   * Merge tag zfs-2.1.7
