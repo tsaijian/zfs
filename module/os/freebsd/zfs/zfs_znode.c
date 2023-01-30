@@ -1305,6 +1305,34 @@ void
 zfs_tstamp_update_setup_ext(znode_t *zp, uint_t flag, uint64_t mtime[2],
     uint64_t ctime[2], boolean_t have_tx)
 {
+	/*
+	 * Implementation note regarding ZFS_ARCHIVE:
+	 * ZFS_ARCHIVE represents the Microsoft file attribute
+	 * FILE_ATTRIBUTE_ARCHIVE, which is defined in MS-FSCC section 2.6 as
+	 * follows:
+	 *
+	 * "A file or directory that requires to be archived. Applications use
+	 * this attribute to mark files for backup or removal."
+	 *
+	 * Implementation guidelines for when the filesystem should set
+	 * FILE_ATTRIBUTE_ARCHIVE are defined in the Microsoft document MS-FSA.
+	 * In summary, the bit must be set on changes to: file data, extended
+	 * attributes, alternate data streams, hard links to file, adding and
+	 * deleting reparse points, altering encyption status of file, changes
+	 * to file's 8.3 name, and file rename.
+	 *
+	 * Of particular relevance to implementation on ZFS is that changes to
+	 * FileBasicInformation (Section 2.1.5.14.2) must not cause
+	 * FILE_ATTRIBUTE_ARCHIVE to be set.
+	 *
+	 * FileBasicInformation is documented in MS-FSCC 2.4.7 as encompassing
+	 * CreationTime, LastAccessTime, LastWriteTime ChangeTime, and
+	 * FileAttributes (ZFS_ARCHIVE, ZFS_READONLY, etc).
+	 *
+	 * Accordingly, altering timestamps via futimens(), utimensat(), and
+	 * related syscalls should not set ZFS_ARCHIVE. ZFS_ARCHIVE is set
+	 * coincidentally with ctime changes.
+	 */
 	timestruc_t	now;
 
 	vfs_timestamp(&now);
@@ -1323,8 +1351,7 @@ zfs_tstamp_update_setup_ext(znode_t *zp, uint_t flag, uint64_t mtime[2],
 	if (flag & AT_MTIME) {
 		ZFS_TIME_ENCODE(&now, mtime);
 		if (zp->z_zfsvfs->z_use_fuids) {
-			zp->z_pflags |= (ZFS_ARCHIVE |
-			    ZFS_AV_MODIFIED);
+			zp->z_pflags |= ZFS_AV_MODIFIED;
 		}
 	}
 
