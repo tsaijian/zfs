@@ -86,6 +86,7 @@
 #include <sys/zpl.h>
 
 #define	NFS41ACL_XATTR		"system.nfs4_acl_xdr"
+#define	STREAMINFO_XATTR	"system.streaminfo"
 
 static const struct {
 	int kmask;
@@ -113,17 +114,29 @@ enum xattr_permission {
 	XAPERM_COMPAT,
 };
 
+enum filldir_op { XAFILLDIR_LIST, XAFILLDIR_STREAM };
+
 typedef struct xattr_filldir {
 	size_t size;
 	size_t offset;
 	char *buf;
 	struct dentry *dentry;
+	cred_t *cred;
+	struct filldir_methods {
+		int (*zap_fn)(struct xattr_filldir *, struct inode *, zap_attribute_t *);
+		int (*sa_fn)(struct xattr_filldir *, nvpair_t *);
+		enum filldir_op op_type;
+	} op;
 } xattr_filldir_t;
 
 static enum xattr_permission zpl_xattr_permission(xattr_filldir_t *,
     const char *, int);
 
 static int zfs_xattr_compat = 0;
+
+#define	STREAMINFO_PREFIX_LEN 2
+#define	STREAMINFO_PREFIX_BYTES(xf) (xf->op.op_type == XAFILLDIR_STREAM ? \
+    STREAMINFO_PREFIX_LEN : 0)
 
 /*
  * Determine is a given xattr name should be visible and if so copy it
@@ -133,24 +146,30 @@ static int
 zpl_xattr_filldir(xattr_filldir_t *xf, const char *name, int name_len)
 {
 	enum xattr_permission perm;
+	int prefix_bytes = STREAMINFO_PREFIX_BYTES(xf);
 
 	/* Check permissions using the per-namespace list xattr handler. */
-	perm = zpl_xattr_permission(xf, name, name_len);
+	perm = zpl_xattr_permission(xf, name + prefix_bytes, name_len - prefix_bytes);
 	if (perm == XAPERM_DENY)
 		return (0);
 
 	/* Prefix the name with "user." if it does not have a namespace. */
 	if (perm == XAPERM_COMPAT) {
 		if (xf->buf) {
-			if (xf->offset + XATTR_USER_PREFIX_LEN + 1 > xf->size)
+			if (xf->offset + XATTR_USER_PREFIX_LEN + 1 + prefix_bytes > xf->size)
 				return (-ERANGE);
 
-			memcpy(xf->buf + xf->offset, XATTR_USER_PREFIX,
+			if (prefix_bytes) {
+				memcpy(xf->buf + xf->offset, name, prefix_bytes);
+				name += prefix_bytes;
+				name_len -= prefix_bytes;
+			}
+			memcpy(xf->buf + xf->offset + prefix_bytes, XATTR_USER_PREFIX,
 			    XATTR_USER_PREFIX_LEN);
-			xf->buf[xf->offset + XATTR_USER_PREFIX_LEN] = '\0';
+			xf->buf[xf->offset + XATTR_USER_PREFIX_LEN + prefix_bytes] = '\0';
 		}
 
-		xf->offset += XATTR_USER_PREFIX_LEN;
+		xf->offset += (XATTR_USER_PREFIX_LEN + prefix_bytes);
 	}
 
 	/* When xf->buf is NULL only calculate the required size. */
@@ -167,6 +186,76 @@ zpl_xattr_filldir(xattr_filldir_t *xf, const char *name, int name_len)
 	return (0);
 }
 
+static bool
+zpl_xattr_is_stream_name(const char *name)
+{
+	if ((strcmp(name, "user.DOSATTRIB") == 0) ||
+	    (strcmp(name, "DOSATTRIB") == 0))
+		return (false);
+
+	return true;
+}
+
+static int
+zpl_xattr_filldir_list_zap(xattr_filldir_t *xf, struct inode *unused, zap_attribute_t *zap)
+{
+	if (zap->za_integer_length != 8 || zap->za_num_integers != 1)
+		return (-ENXIO);
+
+	return zpl_xattr_filldir(xf, zap->za_name, strlen(zap->za_name));
+}
+
+static int
+zpl_xattr_filldir_stream_zap(xattr_filldir_t *xf, struct inode *dxip, zap_attribute_t *zap)
+{
+	int error;
+	znode_t *xzp = NULL;
+	char streambuf[ZAP_MAXNAMELEN + 2 + 16];
+
+	if (zap->za_integer_length != 8 || zap->za_num_integers != 1)
+		return (-ENXIO);
+
+	if (!zpl_xattr_is_stream_name(zap->za_name))
+		return (0);
+
+	error = -zfs_lookup(ITOZ(dxip), zap->za_name, &xzp, 0, xf->cred, NULL, NULL);
+	if (error)
+		return (error);
+
+	// xattr size in kernel is capped at 2 MiB
+	error = i_size_read(ZTOI(xzp));
+
+	zrele(xzp);
+	if (error < 0)
+		return (error);
+
+	snprintf(streambuf, sizeof(streambuf), "%2lx%s%x",
+	    strlen(zap->za_name), zap->za_name, error);
+
+	return zpl_xattr_filldir(xf, streambuf, strlen(streambuf));
+}
+
+static int
+zpl_xattr_filldir_list_sa(xattr_filldir_t *xf, nvpair_t *nvp)
+{
+	return zpl_xattr_filldir(xf, nvpair_name(nvp),
+	    strlen(nvpair_name(nvp)));
+}
+
+static int
+zpl_xattr_filldir_stream_sa(xattr_filldir_t *xf, nvpair_t *nvp)
+{
+	char streambuf[ZAP_MAXNAMELEN + 2 + 16];
+
+	if (!zpl_xattr_is_stream_name(nvpair_name(nvp)))
+		return (0);
+
+	snprintf(streambuf, sizeof(streambuf), "%2lx%s%x",
+	    strlen(nvpair_name(nvp)), nvpair_name(nvp), NVP_NELEM(nvp));
+
+	return zpl_xattr_filldir(xf, streambuf, strlen(streambuf));
+}
+
 /*
  * Read as many directory entry names as will fit in to the provided buffer,
  * or when no buffer is provided calculate the required buffer size.
@@ -181,13 +270,7 @@ zpl_xattr_readdir(struct inode *dxip, xattr_filldir_t *xf)
 	zap_cursor_init(&zc, ITOZSB(dxip)->z_os, ITOZ(dxip)->z_id);
 
 	while ((error = -zap_cursor_retrieve(&zc, &zap)) == 0) {
-
-		if (zap.za_integer_length != 8 || zap.za_num_integers != 1) {
-			error = -ENXIO;
-			break;
-		}
-
-		error = zpl_xattr_filldir(xf, zap.za_name, strlen(zap.za_name));
+		error = xf->op.zap_fn(xf, dxip, &zap);
 		if (error)
 			break;
 
@@ -208,14 +291,17 @@ zpl_xattr_list_dir(xattr_filldir_t *xf, cred_t *cr)
 	struct inode *ip = xf->dentry->d_inode;
 	struct inode *dxip = NULL;
 	znode_t *dxzp;
+	znode_t *zp = ITOZ(ip);
 	int error;
 
 	/* Lookup the xattr directory */
 	error = -zfs_lookup(ITOZ(ip), NULL, &dxzp, LOOKUP_XATTR,
 	    cr, NULL, NULL);
 	if (error) {
-		if (error == -ENOENT)
+		if (error == -ENOENT) {
+			zp->z_pflags |= ZFS_NO_DIR_XATTRS;
 			error = 0;
+		}
 
 		return (error);
 	}
@@ -247,8 +333,7 @@ zpl_xattr_list_sa(xattr_filldir_t *xf)
 	while ((nvp = nvlist_next_nvpair(zp->z_xattr_cached, nvp)) != NULL) {
 		ASSERT3U(nvpair_type(nvp), ==, DATA_TYPE_BYTE_ARRAY);
 
-		error = zpl_xattr_filldir(xf, nvpair_name(nvp),
-		    strlen(nvpair_name(nvp)));
+		error = xf->op.sa_fn(xf, nvp);
 		if (error)
 			return (error);
 	}
@@ -272,6 +357,13 @@ zpl_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 	ZPL_VERIFY_ZP(zp);
 	rw_enter(&zp->z_xattr_lock, RW_READER);
 
+	xf.cred = cr;
+	xf.op = (struct filldir_methods) {
+		.op_type = XAFILLDIR_LIST,
+		.zap_fn = zpl_xattr_filldir_list_zap,
+		.sa_fn = zpl_xattr_filldir_list_sa,
+	};
+
 	if ((zfsvfs->z_acl_type == ZFS_ACLTYPE_NFSV4) &&
 	    ((zp->z_pflags & ZFS_ACL_TRIVIAL) == 0)) {
 		error = zpl_xattr_filldir(&xf, NFS41ACL_XATTR,
@@ -286,9 +378,11 @@ zpl_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 			goto out;
 	}
 
-	error = zpl_xattr_list_dir(&xf, cr);
-	if (error)
-		goto out;
+	if ((zp->z_pflags & ZFS_NO_DIR_XATTRS) == 0) {
+		error = zpl_xattr_list_dir(&xf, cr);
+		if (error)
+			goto out;
+	}
 
 	error = xf.offset;
 out:
@@ -407,7 +501,9 @@ __zpl_xattr_get(struct inode *ip, const char *name, void *value, size_t size,
 			goto out;
 	}
 
-	error = zpl_xattr_get_dir(ip, name, value, size, cr);
+	if ((zp->z_pflags & ZFS_NO_DIR_XATTRS) == 0) {
+		error = zpl_xattr_get_dir(ip, name, value, size, cr);
+	}
 out:
 	if (error == -ENOENT)
 		error = -ENODATA;
@@ -686,6 +782,8 @@ zpl_xattr_set(struct inode *ip, const char *name, const void *value,
 	 */
 	if (error == 0 && (where & XATTR_IN_SA))
 		zpl_xattr_set_sa(ip, name, NULL, 0, 0, cr);
+
+	zp->z_pflags &= ~ZFS_NO_DIR_XATTRS;
 out:
 	rw_exit(&ITOZ(ip)->z_xattr_lock);
 	ZPL_EXIT(zfsvfs);
@@ -1872,6 +1970,88 @@ xattr_handler_t zpl_xattr_nfs41acl_handler =
 	.set	= zpl_xattr_nfs41acl_set,
 };
 
+/*
+ * This xattr handler is an optimized way to get required information for
+ * an MS-FSCC 2.4..43 FileStreamInfo response for SMB servers. Since we
+ * don't want tools to mistakenly try to copy it, the xattr is not returned
+ * in list output. This xattr is also read-only. Streams are written
+ * to ZFS as xattrs.
+ */
+static int
+__zpl_xattr_streaminfo_list(struct inode *ip, char *list, size_t list_size,
+    const char *name, size_t name_len)
+{
+	return (0);
+}
+ZPL_XATTR_LIST_WRAPPER(zpl_xattr_streaminfo_list);
+
+static int
+__zpl_xattr_streaminfo_set(struct inode *ip, const char *name,
+    const void *value, size_t size, int flags)
+{
+	return (-EOPNOTSUPP);
+}
+ZPL_XATTR_SET_WRAPPER(zpl_xattr_streaminfo_set);
+
+static int
+__zpl_xattr_streaminfo_get(struct inode *ip, const char *name,
+    void *buffer, size_t buffer_size)
+{
+	znode_t *zp = ITOZ(ip);
+	zfsvfs_t *zfsvfs = ZTOZSB(zp);
+	struct dentry fake_dent = { .d_inode = ip };
+	xattr_filldir_t xf = { buffer_size, 0, buffer, &fake_dent };
+	cred_t *cr = CRED();
+	fstrans_cookie_t cookie;
+	int error = 0;
+
+	crhold(cr);
+	cookie = spl_fstrans_mark();
+	ZPL_ENTER(zfsvfs);
+	ZPL_VERIFY_ZP(zp);
+	rw_enter(&zp->z_xattr_lock, RW_READER);
+
+	xf.cred = cr;
+	xf.op = (struct filldir_methods) {
+		.op_type = XAFILLDIR_STREAM,
+		.zap_fn = zpl_xattr_filldir_stream_zap,
+		.sa_fn = zpl_xattr_filldir_stream_sa,
+	};
+
+	if (zfsvfs->z_use_sa && zp->z_is_sa) {
+		error = zpl_xattr_list_sa(&xf);
+		if (error)
+			goto out;
+	}
+
+	error = zpl_xattr_list_dir(&xf, cr);
+	if (error)
+		goto out;
+
+	error = xf.offset;
+out:
+
+	rw_exit(&zp->z_xattr_lock);
+	ZPL_EXIT(zfsvfs);
+	spl_fstrans_unmark(cookie);
+	crfree(cr);
+
+	return (error);
+}
+ZPL_XATTR_GET_WRAPPER(zpl_xattr_streaminfo_get);
+
+xattr_handler_t zpl_xattr_streaminfo_handler =
+{
+#ifdef HAVE_XATTR_HANDLER_NAME
+	.name	= STREAMINFO_XATTR,
+#else
+	.prefix	= STREAMINFO_XATTR,
+#endif
+	.list	= zpl_xattr_streaminfo_list,
+	.get	= zpl_xattr_streaminfo_get,
+	.set	= zpl_xattr_streaminfo_set,
+};
+
 xattr_handler_t *zpl_xattr_handlers[] = {
 	&zpl_xattr_security_handler,
 	&zpl_xattr_trusted_handler,
@@ -1881,6 +2061,7 @@ xattr_handler_t *zpl_xattr_handlers[] = {
 	&zpl_xattr_acl_default_handler,
 #endif /* CONFIG_FS_POSIX_ACL */
 	&zpl_xattr_nfs41acl_handler,
+	&zpl_xattr_streaminfo_handler,
 	NULL
 };
 
@@ -1912,6 +2093,10 @@ zpl_xattr_handler(const char *name)
 	if (strncmp(name, NFS41ACL_XATTR,
 	    sizeof (NFS41ACL_XATTR)) == 0)
 		return (&zpl_xattr_nfs41acl_handler);
+
+	if (strncmp(name, STREAMINFO_XATTR,
+	    sizeof (STREAMINFO_XATTR)) == 0)
+		return (&zpl_xattr_streaminfo_handler);
 
 	return (NULL);
 }
