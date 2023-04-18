@@ -4261,13 +4261,17 @@ print_iostat_header(iostat_cbdata_t *cb)
  * by order of magnitude. Uses column_size to add padding.
  */
 static void
-print_stat_color(char *statbuf, unsigned int column_size)
+print_stat_color(const char *statbuf, unsigned int column_size)
 {
 	fputs("  ", stdout);
+	size_t len = strlen(statbuf);
+	while (len < column_size) {
+		fputc(' ', stdout);
+		column_size--;
+	}
 	if (*statbuf == '0') {
 		color_start(ANSI_GRAY);
 		fputc('0', stdout);
-		column_size--;
 	} else {
 		for (; *statbuf; statbuf++) {
 			if (*statbuf == 'K') color_start(ANSI_GREEN);
@@ -4282,8 +4286,6 @@ print_stat_color(char *statbuf, unsigned int column_size)
 		}
 	}
 	color_end();
-	for (; column_size > 0; column_size--)
-		fputc(' ', stdout);
 }
 
 /*
