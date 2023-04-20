@@ -24,14 +24,10 @@
  * Use is subject to license terms.
  */
 
+#include_next <unistd.h>
+
 #ifndef _LIBSPL_UNISTD_H
 #define	_LIBSPL_UNISTD_H
-
-#ifdef HAVE_LIBBSD
-#include <bsd/unistd.h>
-#endif
-
-#include_next <unistd.h>
 
 #include <sys/ioctl.h>
 
