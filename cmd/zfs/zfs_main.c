@@ -3474,6 +3474,8 @@ print_header(list_cbdata_t *cb)
 	boolean_t first = B_TRUE;
 	boolean_t right_justify;
 
+	color_start(ANSI_BOLD);
+
 	for (; pl != NULL; pl = pl->pl_next) {
 		if (!first) {
 			(void) printf("  ");
@@ -3500,7 +3502,29 @@ print_header(list_cbdata_t *cb)
 			(void) printf("%-*s", (int)pl->pl_width, header);
 	}
 
+	color_end();
+
 	(void) printf("\n");
+}
+
+/*
+ * Decides on the color that the avail value should be printed in.
+ * > 80% used = yellow
+ * > 90% used = red
+ */
+static const char *
+zfs_list_avail_color(zfs_handle_t *zhp)
+{
+	uint64_t used = zfs_prop_get_int(zhp, ZFS_PROP_USED);
+	uint64_t avail = zfs_prop_get_int(zhp, ZFS_PROP_AVAILABLE);
+	int percentage = (int)((double)avail / MAX(avail + used, 1) * 100);
+
+	if (percentage > 20)
+		return (NULL);
+	else if (percentage > 10)
+		return (ANSI_YELLOW);
+	else
+		return (ANSI_RED);
 }
 
 /*
@@ -3566,6 +3590,22 @@ print_dataset(zfs_handle_t *zhp, list_cbdata_t *cb)
 		}
 
 		/*
+		 * zfs_list_avail_color() needs ZFS_PROP_AVAILABLE + USED
+		 * - so we need another for() search for the USED part
+		 * - when no colors wanted, we can skip the whole thing
+		 */
+		if (use_color() && pl->pl_prop == ZFS_PROP_AVAILABLE) {
+			zprop_list_t *pl2 = cb->cb_proplist;
+			for (; pl2 != NULL; pl2 = pl2->pl_next) {
+				if (pl2->pl_prop == ZFS_PROP_USED) {
+					color_start(zfs_list_avail_color(zhp));
+					/* found it, no need for more loops */
+					break;
+				}
+			}
+		}
+
+		/*
 		 * If this is being called in scripted mode, or if this is the
 		 * last column and it is left-justified, don't include a width
 		 * format specifier.
@@ -3576,6 +3616,9 @@ print_dataset(zfs_handle_t *zhp, list_cbdata_t *cb)
 			(void) printf("%*s", (int)pl->pl_width, propstr);
 		else
 			(void) printf("%-*s", (int)pl->pl_width, propstr);
+
+		if (pl->pl_prop == ZFS_PROP_AVAILABLE)
+			color_end();
 	}
 
 	(void) printf("\n");
@@ -4461,7 +4504,6 @@ zfs_do_send(int argc, char **argv)
 			flags.parsable = B_TRUE;
 			break;
 		case 'V':
-			flags.progress = B_TRUE;
 			flags.progressastitle = B_TRUE;
 			break;
 		case 'v':
@@ -4539,7 +4581,7 @@ zfs_do_send(int argc, char **argv)
 		}
 	}
 
-	if (flags.parsable && flags.verbosity == 0)
+	if ((flags.parsable || flags.progressastitle) && flags.verbosity == 0)
 		flags.verbosity = 1;
 
 	argc -= optind;
@@ -8701,12 +8743,7 @@ main(int argc, char **argv)
 
 	libzfs_print_on_error(g_zfs, B_TRUE);
 
-#ifdef __linux__
-#ifdef HAVE_PROCTITLE
-	extern char **environ;
-	setproctitle_init(argc, argv, environ);
-#endif
-#endif
+	zfs_setproctitle_init(argc, argv, environ);
 
 	/*
 	 * Many commands modify input strings for string parsing reasons.
