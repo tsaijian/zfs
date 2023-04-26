@@ -172,16 +172,17 @@ zpl_xattr_filldir(xattr_filldir_t *xf, const char *name, int name_len)
  * or when no buffer is provided calculate the required buffer size.
  */
 static int
-zpl_xattr_readdir(struct inode *dxip, xattr_filldir_t *xf)
+zpl_xattr_readdir(struct inode *dxip, xattr_filldir_t *xf, znode_t *parent)
 {
 	zap_cursor_t zc;
 	zap_attribute_t	zap;
 	int error;
+	bool has_xattr = false;
 
 	zap_cursor_init(&zc, ITOZSB(dxip)->z_os, ITOZ(dxip)->z_id);
 
 	while ((error = -zap_cursor_retrieve(&zc, &zap)) == 0) {
-
+		has_xattr = true;
 		if (zap.za_integer_length != 8 || zap.za_num_integers != 1) {
 			error = -ENXIO;
 			break;
@@ -199,6 +200,9 @@ zpl_xattr_readdir(struct inode *dxip, xattr_filldir_t *xf)
 	if (error == -ENOENT)
 		error = 0;
 
+	if ((error == 0) && !has_xattr) {
+		parent->z_pflags |= ZFS_NO_DIR_XATTRS;
+	}
 	return (error);
 }
 
@@ -208,20 +212,23 @@ zpl_xattr_list_dir(xattr_filldir_t *xf, cred_t *cr)
 	struct inode *ip = xf->dentry->d_inode;
 	struct inode *dxip = NULL;
 	znode_t *dxzp;
+	znode_t *zp = ITOZ(ip);
 	int error;
 
 	/* Lookup the xattr directory */
 	error = -zfs_lookup(ITOZ(ip), NULL, &dxzp, LOOKUP_XATTR,
 	    cr, NULL, NULL);
 	if (error) {
-		if (error == -ENOENT)
+		if (error == -ENOENT) {
+			zp->z_pflags |= ZFS_NO_DIR_XATTRS;
 			error = 0;
+		}
 
 		return (error);
 	}
 
 	dxip = ZTOI(dxzp);
-	error = zpl_xattr_readdir(dxip, xf);
+	error = zpl_xattr_readdir(dxip, xf, zp);
 	iput(dxip);
 
 	return (error);
@@ -286,10 +293,11 @@ zpl_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 			goto out;
 	}
 
-	error = zpl_xattr_list_dir(&xf, cr);
-	if (error)
-		goto out;
-
+	if ((zp->z_pflags & ZFS_NO_DIR_XATTRS) == 0) {
+		error = zpl_xattr_list_dir(&xf, cr);
+		if (error)
+			goto out;
+	}
 	error = xf.offset;
 out:
 
@@ -407,7 +415,9 @@ __zpl_xattr_get(struct inode *ip, const char *name, void *value, size_t size,
 			goto out;
 	}
 
-	error = zpl_xattr_get_dir(ip, name, value, size, cr);
+	if ((zp->z_pflags & ZFS_NO_DIR_XATTRS) == 0) {
+		error = zpl_xattr_get_dir(ip, name, value, size, cr);
+	}
 out:
 	if (error == -ENOENT)
 		error = -ENODATA;
@@ -686,6 +696,8 @@ zpl_xattr_set(struct inode *ip, const char *name, const void *value,
 	 */
 	if (error == 0 && (where & XATTR_IN_SA))
 		zpl_xattr_set_sa(ip, name, NULL, 0, 0, cr);
+
+	zp->z_pflags &= ~ZFS_NO_DIR_XATTRS;
 out:
 	rw_exit(&ITOZ(ip)->z_xattr_lock);
 	ZPL_EXIT(zfsvfs);
