@@ -1508,7 +1508,7 @@ zpl_permission(struct inode *ip, int mask)
 	/*
 	 *  Avoid potentially blocking in RCU walk.
 	 */
-	if (mask & MAY_NOT_BLOCK) {
+	if ((mask & MAY_NOT_BLOCK) && (ITOZ(ip)->z_acl_cached == NULL)) {
 		return (-ECHILD);
 	}
 
