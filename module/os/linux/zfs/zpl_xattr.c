@@ -1514,7 +1514,11 @@ zpl_permission(struct inode *ip, int mask)
 
 	cr = CRED();
 	crhold(cr);
-	ret = -zfs_access(ITOZ(ip), to_check, V_ACE_MASK, cr);
+	if (to_check == ACE_EXECUTE) {
+		ret = -zfs_fastaccesschk_execute(ITOZ(ip), cr);
+	} else {
+		ret = -zfs_access(ITOZ(ip), to_check, V_ACE_MASK, cr);
+	}
 	if (ret != -EPERM && ret != -EACCES) {
 		crfree(cr);
 		return (ret);
@@ -1524,6 +1528,11 @@ zpl_permission(struct inode *ip, int mask)
 	 * There are some situations in which capabilities
 	 * may allow overriding the DACL.
 	 */
+	if (capable(CAP_DAC_OVERRIDE)) {
+		crfree(cr);
+		return (0);
+	}
+
 	if (S_ISDIR(ip->i_mode)) {
 #ifdef SB_NFSV4ACL
 		if (!(mask & (MAY_WRITE | NFS41ACL_WRITE_ALL))) {
@@ -1535,24 +1544,12 @@ zpl_permission(struct inode *ip, int mask)
 				return (0);
 			}
 		}
-		if (capable(CAP_DAC_OVERRIDE)) {
-			crfree(cr);
-			return (0);
-		}
 		crfree(cr);
 		return (ret);
 	}
 
 	if (to_check == ACE_READ_DATA) {
 		if (capable(CAP_DAC_READ_SEARCH)) {
-			crfree(cr);
-			return (0);
-		}
-	}
-
-	if (!(mask & MAY_EXEC) ||
-	    (zfs_fastaccesschk_execute(ITOZ(ip), cr) == 0)) {
-		if (capable(CAP_DAC_OVERRIDE)) {
 			crfree(cr);
 			return (0);
 		}
