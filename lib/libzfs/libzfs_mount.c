@@ -73,6 +73,12 @@
 #include <sys/vfs.h>
 #include <sys/dsl_crypt.h>
 
+#ifdef __linux__
+#include <linux/fs.h>
+#else
+#include <sys/stat.h>
+#endif
+
 #include <libzfs.h>
 
 #include "libzfs_impl.h"
@@ -339,6 +345,34 @@ zfs_add_options(zfs_handle_t *zhp, char *options, int len)
 	return (error);
 }
 
+static int
+zfs_mount_set_schg(const char *mountpoint)
+{
+	int r;
+#ifdef __linux__
+	int fd;
+	uint32_t attrs;
+	fd = open(mountpoint, (O_RDONLY|O_NONBLOCK|O_NOFOLLOW));
+	if (fd < 0)
+		return (-1);
+	r = ioctl(fd, FS_IOC_GETFLAGS, &attrs);
+	if (r < 0)
+		goto out;
+	attrs |= FS_IMMUTABLE_FL;
+	r = ioctl(fd, FS_IOC_SETFLAGS, &attrs);
+out:
+	close(fd);
+#else
+	struct stat s;
+	r = stat(mountpoint, &s);
+	if (r < 0)
+		return (r);
+	s.st_flags |= (SF_IMMUTABLE);
+	r = chflags(mountpoint, s.st_flags);
+#endif
+	return (r);
+}
+
 int
 zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 {
@@ -367,6 +401,7 @@ zfs_mount_at(zfs_handle_t *zhp, const char *options, int flags,
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 	uint64_t keystatus;
 	int remount = 0, rc;
+	boolean_t set_schg = B_FALSE;
 
 	if (options == NULL) {
 		(void) strlcpy(mntopts, MNTOPT_DEFAULTS, sizeof (mntopts));
@@ -471,6 +506,7 @@ zfs_mount_at(zfs_handle_t *zhp, const char *options, int flags,
 			    dgettext(TEXT_DOMAIN, "cannot mount '%s'"),
 			    mountpoint));
 		}
+		set_schg = B_TRUE;
 	}
 
 	/*
@@ -537,6 +573,16 @@ zfs_mount_at(zfs_handle_t *zhp, const char *options, int flags,
 
 	/* add the mounted entry into our cache */
 	libzfs_mnttab_add(hdl, zfs_get_name(zhp), mountpoint, mntopts);
+
+	if (set_schg) {
+		if (zfs_mount_set_schg(mountpoint) < 0) {
+			return (zfs_error_fmt(hdl, EZFS_MOUNTFAILED,
+					dgettext(TEXT_DOMAIN, "cannot set immuteable"
+					"flag on auto generated mountpoint '%s' of "
+					"mount '%s'"), mountpoint, zhp->zfs_name));
+		}
+	}
+
 	return (0);
 }
 
