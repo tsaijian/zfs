@@ -28,7 +28,7 @@
  * Copyright 2017 Joyent, Inc.
  * Copyright (c) 2017, Intel Corporation.
  * Copyright (c) 2019, Datto Inc. All rights reserved.
- * Copyright [2021] Hewlett Packard Enterprise Development LP
+ * Copyright (c) 2021, 2023 Hewlett Packard Enterprise Development LP.
  */
 
 #include <sys/zfs_context.h>
@@ -2646,6 +2646,17 @@ vdev_reopen(vdev_t *vd)
 	}
 
 	/*
+	 * Recheck if resilver is still needed and cancel any
+	 * scheduled resilver if resilver is unneeded.
+	 */
+	if (!vdev_resilver_needed(spa->spa_root_vdev, NULL, NULL) &&
+	    spa->spa_async_tasks & SPA_ASYNC_RESILVER) {
+		mutex_enter(&spa->spa_async_lock);
+		spa->spa_async_tasks &= ~SPA_ASYNC_RESILVER;
+		mutex_exit(&spa->spa_async_lock);
+	}
+
+	/*
 	 * Reassess parent vdev's health.
 	 */
 	vdev_propagate_state(vd);
@@ -3983,10 +3994,17 @@ vdev_remove_wanted(spa_t *spa, uint64_t guid)
 		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(ENODEV)));
 
 	/*
-	 * If the vdev is already removed, then don't do anything.
+	 * If the vdev is already removed, or expanding which can trigger
+	 * repartition add/remove events, then don't do anything.
 	 */
-	if (vd->vdev_removed)
+	if (vd->vdev_removed || vd->vdev_expanding)
 		return (spa_vdev_state_exit(spa, NULL, 0));
+
+	/*
+	 * Confirm the vdev has been removed, otherwise don't do anything.
+	 */
+	if (vd->vdev_ops->vdev_op_leaf && !zio_wait(vdev_probe(vd, NULL)))
+		return (spa_vdev_state_exit(spa, NULL, SET_ERROR(EEXIST)));
 
 	vd->vdev_remove_wanted = B_TRUE;
 	spa_async_request(spa, SPA_ASYNC_REMOVE);
