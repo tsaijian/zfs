@@ -930,7 +930,7 @@ format_entry(char *str, size_t sz, const zfsacl_entry_t _entry)
 		tocopy = slen;
 	memcpy(str, buf, tocopy);
 	str[tocopy] = '\0';
-	return tocopy;
+	return (tocopy);
 }
 
 char *
