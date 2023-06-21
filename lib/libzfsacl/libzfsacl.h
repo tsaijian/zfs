@@ -2,9 +2,14 @@
 #define	__ZFSACL_H__
 
 #include <zfs_config.h>
-#include <sys/stdtypes.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+typedef enum { B_FALSE, B_TRUE }	boolean_t;
+typedef unsigned int		uint_t;
 
 /*
  * BRAND_ACCESS and BRAND_DEFAULT
@@ -43,27 +48,24 @@ struct native_acl {
     zfsacl_brand_t brand;
 };
 
-#if defined(FREEBSD)
-
-#define	zfsacl_entry acl_entry
-#define	zfsacl acl_t_struct
-
-#else
-
+#ifdef __linux__
 struct zfsacl_entry { uint_t netlong[5]; };
 struct zfsacl {
     size_t aclbuf_size;
     zfsacl_brand_t brand;
     uint_t *aclbuf;
 };
-
+#else
+#define	_ACL_PRIVATE
+#define	zfsacl_entry acl_entry
+#define	zfsacl acl_t_struct
 #endif
 
 typedef struct zfsacl_entry *zfsacl_entry_t;
 typedef struct zfsacl *zfsacl_t;
 
 typedef unsigned int zfsace_flagset_t;
-typedef unsigned int zfsace_permset_t;
+typedef int zfsace_permset_t;
 typedef uid_t zfsace_id_t;
 typedef unsigned int zfsacl_aclflags_t;
 

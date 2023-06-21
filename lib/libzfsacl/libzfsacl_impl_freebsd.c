@@ -1,6 +1,5 @@
-
-#include <sys/acl.h>
 #include "libzfsacl.h"
+#include <sys/acl.h>
 
 #define	BSDACE(zfsace) ((acl_entry_t)zfsace)
 #define	BSDACL(zfsacl) ((acl_t)zfsacl)
@@ -229,7 +228,7 @@ zfsacl_get_acecnt(zfsacl_t _acl, uint_t *_acecnt)
 }
 
 static boolean_t
-validate_entry_idx(zfsacl_t _acl, int _idx)
+validate_entry_idx(zfsacl_t _acl, uint_t _idx)
 {
 	uint_t acecnt;
 	boolean_t ok;
@@ -414,7 +413,7 @@ boolean_t
 zfsace_set_permset(zfsacl_entry_t _entry, zfsace_permset_t _permset)
 {
 	acl_entry_t entry = BSDACE(_entry);
-	acl_perm_t permset = 0;
+	int permset = 0;
 	int i, err;
 
 	for (i = 0; i < ARRAY_SIZE(bsdperm2nfs4perm); i++) {

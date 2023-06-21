@@ -1,6 +1,6 @@
-
 #include <arpa/inet.h>
 #include <sys/xattr.h>
+#include <bsd/string.h>
 #include <assert.h>
 #include "libzfsacl.h"
 
