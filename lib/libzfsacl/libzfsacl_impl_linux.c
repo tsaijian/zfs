@@ -1,6 +1,5 @@
 #include <arpa/inet.h>
 #include <sys/xattr.h>
-#include <bsd/string.h>
 #include <assert.h>
 #include "libzfsacl.h"
 
@@ -898,6 +897,8 @@ static size_t
 format_entry(char *str, size_t sz, const zfsacl_entry_t _entry)
 {
 	size_t off = 0;
+	size_t slen = 0;
+	size_t tocopy = 0;
 	char buf[MAX_ENTRY_LENGTH + 1] = { 0 };
 
 	if (!format_who(buf, sizeof (buf), _entry, &off))
@@ -922,7 +923,14 @@ format_entry(char *str, size_t sz, const zfsacl_entry_t _entry)
 		return (-1);
 
 	buf[off] = '\n';
-	return (strlcpy(str, buf, sz));
+	slen = strlen(buf);
+	if (slen >= sz)
+		tocopy = sz - 1;
+	else
+		tocopy = slen;
+	memcpy(str, buf, tocopy);
+	str[tocopy] = '\0';
+	return tocopy;
 }
 
 char *

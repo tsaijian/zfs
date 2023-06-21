@@ -5,16 +5,12 @@ srcdir = '@abs_top_srcdir@/lib/libzfsacl'
 
 topsrcdir = '@abs_top_srcdir@'
 relpath_topsrcdir = os.path.relpath(topsrcdir)
-abspath_libs = topsrcdir + '/.libs'
-relpath_libs = os.path.relpath(abspath_libs)
 if sys.platform.startswith('linux'):
 	src = ['libzfsacl_impl_linux.c', 'libpyzfsacl.c', 'libsunacl.c']
 else:
 	src = ['libzfsacl_impl_freebsd.c', 'libpyzfsacl.c']
 
-libzfsacl_mod = Extension('libzfsacl',
-                          include_dirs=[relpath_topsrcdir],
-                          extra_objects=[relpath_libs + '/libspl.a'],
+libzfsacl_mod = Extension('libzfsacl', include_dirs=[relpath_topsrcdir],
                           sources=src)
 
 setup(

@@ -9,7 +9,7 @@ dist_noinst_DATA += \
 SUBSTFILES += %D%/setup.py
 
 ALL_LOCAL += libzfsacl-all-local
-libzfsacl-all-local: %D%/setup.py lib
+libzfsacl-all-local: %D%/setup.py
 	cd %D% && $(PYTHON) setup.py egg_info -e . build
 
 INSTALL_DATA_HOOKS += libzfsacl-install-data-hook
