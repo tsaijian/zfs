@@ -1116,7 +1116,7 @@ __zpl_ioctl_setdosflags(struct inode *ip, uint64_t ioctl_flags, xvattr_t *xva)
 	    !capable(CAP_LINUX_IMMUTABLE))
 		return (-EPERM);
 
-	if (!zpl_inode_owner_or_capable(kcred->user_ns, ip))
+	if (!zpl_inode_owner_or_capable(zfs_init_idmap, ip))
 		return (-EACCES);
 
 	xva_init(xva);
