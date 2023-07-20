@@ -1,3 +1,9 @@
+openzfs-linux (2.1.12-1) unstable; urgency=medium
+
+  * Fix raw receive with different indirect block size.
+
+ -- Ameer Hamza <ahamza@ixsystems.com>  Thu, 20 Jul 2023 09:00:00 -0500
+
 openzfs-linux (2.1.12-0) unstable; urgency=medium
 
   * Merge tag zfs-2.1.12
