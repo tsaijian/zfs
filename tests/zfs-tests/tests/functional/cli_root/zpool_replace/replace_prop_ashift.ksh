@@ -72,31 +72,9 @@ do
 	do
 		log_must zpool create -o ashift=$ashift $TESTPOOL1 $disk1
 		log_must zpool set ashift=$pprop $TESTPOOL1
-		# ashift_of(replacing_disk) <= ashift_of(existing_vdev)
-		if [[ $pprop -le $ashift ]]
-		then
-			log_must zpool replace $TESTPOOL1 $disk1 $disk2
-			wait_replacing $TESTPOOL1
-			verify_ashift $disk2 $ashift
-			if [[ $? -ne 0 ]]
-			then
-				log_fail "Device was replaced without " \
-				    "setting ashift value to $ashift"
-			fi
-		else
-			# cannot replace if pool prop ashift > vdev ashift
-			log_mustnot zpool replace $TESTPOOL1 $disk1 $disk2
-			# verify we can override the pool prop value manually
-			log_must zpool replace -o ashift=$ashift $TESTPOOL1 \
-			    $disk1 $disk2
-			wait_replacing $TESTPOOL1
-			verify_ashift $disk2 $ashift
-			if [[ $? -ne 0 ]]
-			then
-				log_fail "Device was replaced without " \
-				    "setting ashift value to $ashift"
-			fi
-		fi
+		log_must zpool replace $TESTPOOL1 $disk1 $disk2
+		wait_replacing $TESTPOOL1
+		log_must verify_ashift $disk2 $ashift
 		# clean things for the next run
 		log_must zpool destroy $TESTPOOL1
 		log_must zpool labelclear $disk1
