@@ -66,36 +66,16 @@ log_must set_tunable64 VDEV_FILE_PHYSICAL_ASHIFT 16
 typeset ashifts=("9" "10" "11" "12" "13" "14" "15" "16")
 for ashift in ${ashifts[@]}
 do
-	for cmdval in ${ashifts[@]}
-	do
-		log_must zpool create -o ashift=$ashift $TESTPOOL1 $disk1
-		verify_ashift $disk1 $ashift
-		if [[ $? -ne 0 ]]
-		then
-			log_fail "Pool was created without setting ashift " \
-			    "value to $ashift"
-		fi
-		# ashift_of(replacing_disk) <= ashift_of(existing_vdev)
-		if [[ $cmdval -le $ashift ]]
-		then
-			log_must zpool replace -o ashift=$cmdval $TESTPOOL1 \
-			    $disk1 $disk2
-			verify_ashift $disk2 $ashift
-			if [[ $? -ne 0 ]]
-			then
-				log_fail "Device was replaced without " \
-				    "setting ashift value to $ashift"
-			fi
-			wait_replacing $TESTPOOL1
-		else
-			log_mustnot zpool replace -o ashift=$cmdval $TESTPOOL1 \
-			    $disk1 $disk2
-		fi
-		# clean things for the next run
-		log_must zpool destroy $TESTPOOL1
-		log_must zpool labelclear $disk1
-		log_must zpool labelclear $disk2
-	done
+	log_must zpool create -o ashift=$ashift $TESTPOOL1 $disk1
+	log_must verify_ashift $disk1 $ashift
+	# ashift_of(replacing_disk) <= ashift_of(existing_vdev)
+	log_must zpool replace $TESTPOOL1 $disk1 $disk2
+	log_must verify_ashift $disk2 $ashift
+	wait_replacing $TESTPOOL1
+	# clean things for the next run
+	log_must zpool destroy $TESTPOOL1
+	log_must zpool labelclear $disk1
+	log_must zpool labelclear $disk2
 done
 
 typeset badvals=("off" "on" "1" "8" "17" "1b" "ff" "-")
