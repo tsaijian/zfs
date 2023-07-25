@@ -438,6 +438,7 @@ struct vdev {
 	boolean_t	vdev_copy_uberblocks;  /* post expand copy uberblocks */
 	boolean_t	vdev_resilver_deferred;  /* resilver deferred */
 	boolean_t	vdev_kobj_flag; /* kobj event record */
+	boolean_t	vdev_attaching; /* vdev attach ashift handling */
 	vdev_queue_t	vdev_queue;	/* I/O deadline schedule queue	*/
 	vdev_cache_t	vdev_cache;	/* physical block cache		*/
 	spa_aux_vdev_t	*vdev_aux;	/* for l2cache and spares vdevs	*/
