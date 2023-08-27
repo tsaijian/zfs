@@ -1332,10 +1332,12 @@ typedef struct ddt_histogram {
 #define	ZVOL_DIR		"/dev/zvol/"
 
 #define	ZVOL_MAJOR		230
+#define	ZVOL_CDEV_MAJOR		231
 #define	ZVOL_MINOR_BITS		4
 #define	ZVOL_MINOR_MASK		((1U << ZVOL_MINOR_BITS) - 1)
 #define	ZVOL_MINORS		(1 << 4)
 #define	ZVOL_DEV_NAME		"zd"
+#define	ZVOL_CDEV_NAME		"zc"
 
 #define	ZVOL_PROP_NAME		"name"
 #define	ZVOL_DEFAULT_BLOCKSIZE	16384

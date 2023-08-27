@@ -40,9 +40,17 @@
 
 #include <linux/blkdev_compat.h>
 #include <linux/task_io_accounting_ops.h>
+#include <linux/cdev.h>
 
 #ifdef HAVE_BLK_MQ
 #include <linux/blk-mq.h>
+#endif
+
+/*
+ * Global class for ZVOL char dev. GPL License issue
+ */
+#if 0
+static struct class *zvol_cdev_cls;
 #endif
 
 static void zvol_request_impl(zvol_state_t *zv, struct bio *bio,
@@ -105,6 +113,8 @@ struct zvol_state_os {
 	struct gendisk		*zvo_disk;	/* generic disk */
 	struct request_queue	*zvo_queue;	/* request queue */
 	dev_t			zvo_dev;	/* device id */
+	struct cdev		zvo_cdev;	/* character device */
+	dev_t			zvo_cdev_id;	/* character device id */
 
 #ifdef HAVE_BLK_MQ
 	struct blk_mq_tag_set tag_set;
@@ -112,6 +122,9 @@ struct zvol_state_os {
 
 	/* Set from the global 'zvol_use_blk_mq' at zvol load */
 	boolean_t use_blk_mq;
+
+	/* Back pointer */
+	zvol_state_t *zv;
 };
 
 static taskq_t *zvol_taskq;
@@ -1018,6 +1031,361 @@ static const struct block_device_operations zvol_ops = {
 #endif
 };
 
+/*
+ * TODO: Just copied zpl_generic_write_checks() and zpl_uio_init() from
+ * zpl_file.c, make the functions shareable
+ */
+static inline ssize_t
+zpl_generic_write_checks(struct kiocb *kiocb, struct iov_iter *from,
+    size_t *countp)
+{
+#ifdef HAVE_GENERIC_WRITE_CHECKS_KIOCB
+	ssize_t ret = generic_write_checks(kiocb, from);
+	if (ret <= 0)
+		return (ret);
+
+	*countp = ret;
+#else
+	struct file *file = kiocb->ki_filp;
+	struct address_space *mapping = file->f_mapping;
+	struct inode *ip = mapping->host;
+	int isblk = S_ISBLK(ip->i_mode);
+
+	*countp = iov_iter_count(from);
+	ssize_t ret = generic_write_checks(file, &kiocb->ki_pos, countp, isblk);
+	if (ret)
+		return (ret);
+#endif
+
+	return (0);
+}
+
+#if defined(HAVE_VFS_RW_ITERATE)
+
+/*
+ * When HAVE_VFS_IOV_ITER is defined the iov_iter structure supports
+ * iovecs, kvevs, bvecs and pipes, plus all the required interfaces to
+ * manipulate the iov_iter are available.  In which case the full iov_iter
+ * can be attached to the uio and correctly handled in the lower layers.
+ * Otherwise, for older kernels extract the iovec and pass it instead.
+ */
+static void
+zpl_uio_init(zfs_uio_t *uio, struct kiocb *kiocb, struct iov_iter *to,
+    loff_t pos, ssize_t count, size_t skip)
+{
+#if defined(HAVE_VFS_IOV_ITER)
+	zfs_uio_iov_iter_init(uio, to, pos, count, skip);
+#else
+#ifdef HAVE_IOV_ITER_TYPE
+	zfs_uio_iovec_init(uio, to->iov, to->nr_segs, pos,
+	    iov_iter_type(to) & ITER_KVEC ? UIO_SYSSPACE : UIO_USERSPACE,
+	    count, skip);
+#else
+	zfs_uio_iovec_init(uio, to->iov, to->nr_segs, pos,
+	    to->type & ITER_KVEC ? UIO_SYSSPACE : UIO_USERSPACE,
+	    count, skip);
+#endif
+#endif
+}
+#endif
+
+/*
+ * TODO: Move common path for zvol_open and zvol_cdev_open
+ * in a separate function
+ */
+static int zvol_cdev_open(struct inode *inode, struct file *filp)
+{
+	int error = 0;
+	boolean_t drop_suspend = B_FALSE;
+	fmode_t flag = filp->f_mode;
+	struct zvol_state_os *zvos = container_of(inode->i_cdev,
+	    struct zvol_state_os, zvo_cdev);
+	zvol_state_t *zv = zvos->zv;
+	rw_enter(&zvol_state_lock, RW_READER);
+	/*
+	 * Obtain a copy of private_data under the zvol_state_lock to make
+	 * sure that either the result of zvol free code path setting
+	 * bdev->bd_disk->private_data to NULL is observed, or zvol_os_free()
+	 * is not called on this zv because of the positive zv_open_count.
+	 */
+	if (zv == NULL) {
+		rw_exit(&zvol_state_lock);
+		return (SET_ERROR(-ENXIO));
+	}
+
+	mutex_enter(&zv->zv_state_lock);
+	/*
+	 * Make sure zvol is not suspended during first open
+	 * (hold zv_suspend_lock) and respect proper lock acquisition
+	 * ordering - zv_suspend_lock before zv_state_lock
+	 */
+	if (zv->zv_open_count == 0) {
+		if (!rw_tryenter(&zv->zv_suspend_lock, RW_READER)) {
+			mutex_exit(&zv->zv_state_lock);
+			rw_enter(&zv->zv_suspend_lock, RW_READER);
+			mutex_enter(&zv->zv_state_lock);
+			/* check to see if zv_suspend_lock is needed */
+			if (zv->zv_open_count != 0) {
+				rw_exit(&zv->zv_suspend_lock);
+			} else {
+				drop_suspend = B_TRUE;
+			}
+		} else {
+			drop_suspend = B_TRUE;
+		}
+	}
+	rw_exit(&zvol_state_lock);
+
+	ASSERT(MUTEX_HELD(&zv->zv_state_lock));
+
+	if (zv->zv_open_count == 0) {
+		ASSERT(RW_READ_HELD(&zv->zv_suspend_lock));
+
+		error = -zvol_first_open(zv, !(flag & FMODE_WRITE));
+	}
+
+	if (error == 0) {
+		if ((flag & FMODE_WRITE) && (zv->zv_flags & ZVOL_RDONLY)) {
+			if (zv->zv_open_count == 0)
+				zvol_last_close(zv);
+
+			error = SET_ERROR(-EROFS);
+		} else {
+			zv->zv_open_count++;
+		}
+	}
+
+	mutex_exit(&zv->zv_state_lock);
+	if (drop_suspend)
+		rw_exit(&zv->zv_suspend_lock);
+
+	return (error);
+}
+
+/*
+ * TODO: Move common path for zvol_cdev_release and zvol_release
+ * in a separate function
+ */
+static int zvol_cdev_release(struct inode *inode, struct file *filp)
+{
+	boolean_t drop_suspend = B_TRUE;
+	struct zvol_state_os *zvos = container_of(inode->i_cdev,
+	    struct zvol_state_os, zvo_cdev);
+	zvol_state_t *zv = zvos->zv;
+	rw_enter(&zvol_state_lock, RW_READER);
+
+	mutex_enter(&zv->zv_state_lock);
+	ASSERT3U(zv->zv_open_count, >, 0);
+	/*
+	 * make sure zvol is not suspended during last close
+	 * (hold zv_suspend_lock) and respect proper lock acquisition
+	 * ordering - zv_suspend_lock before zv_state_lock
+	 */
+	if (zv->zv_open_count == 1) {
+		if (!rw_tryenter(&zv->zv_suspend_lock, RW_READER)) {
+			mutex_exit(&zv->zv_state_lock);
+			rw_enter(&zv->zv_suspend_lock, RW_READER);
+			mutex_enter(&zv->zv_state_lock);
+			/* check to see if zv_suspend_lock is needed */
+			if (zv->zv_open_count != 1) {
+				rw_exit(&zv->zv_suspend_lock);
+				drop_suspend = B_FALSE;
+			}
+		}
+	} else {
+		drop_suspend = B_FALSE;
+	}
+	rw_exit(&zvol_state_lock);
+
+	ASSERT(MUTEX_HELD(&zv->zv_state_lock));
+
+	zv->zv_open_count--;
+	if (zv->zv_open_count == 0) {
+		ASSERT(RW_READ_HELD(&zv->zv_suspend_lock));
+		zvol_last_close(zv);
+	}
+
+	mutex_exit(&zv->zv_state_lock);
+
+	if (drop_suspend)
+		rw_exit(&zv->zv_suspend_lock);
+	return (0);
+}
+
+/*
+ * TODO: Move common path for zvol_cdev_read and zvol_read
+ * in a separate function
+ */
+static ssize_t zvol_cdev_read(struct kiocb *kiocb, struct iov_iter *to)
+{
+	struct file *filp = kiocb->ki_filp;
+	struct inode *ip = filp->f_mapping->host;
+	zfs_uio_t uio;
+	ssize_t count = iov_iter_count(to);
+	int error = 0;
+	struct zvol_state_os *zvos = container_of(ip->i_cdev,
+	    struct zvol_state_os, zvo_cdev);
+	zvol_state_t *zv = zvos->zv;
+
+	ASSERT3P(zv, !=, NULL);
+	ASSERT3U(zv->zv_open_count, >, 0);
+
+	zpl_uio_init(&uio, kiocb, to, kiocb->ki_pos, count, 0);
+	rw_enter(&zv->zv_suspend_lock, RW_READER);
+	ssize_t start_resid = uio.uio_resid;
+	zfs_locked_range_t *lr = zfs_rangelock_enter(&zv->zv_rangelock,
+	    uio.uio_loffset, uio.uio_resid, RL_READER);
+	uint64_t volsize = zv->zv_volsize;
+	while (uio.uio_resid > 0 && uio.uio_loffset < volsize) {
+		uint64_t bytes = MIN(uio.uio_resid, DMU_MAX_ACCESS >> 1);
+
+		/* don't read past the end */
+		if (bytes > volsize - uio.uio_loffset)
+			bytes = volsize - uio.uio_loffset;
+
+		error = dmu_read_uio_dnode(zv->zv_dn, &uio, bytes);
+		if (error) {
+			/* convert checksum errors into IO errors */
+			if (error == ECKSUM)
+				error = SET_ERROR(EIO);
+			break;
+		}
+	}
+	zfs_rangelock_exit(lr);
+	int64_t nread = start_resid - uio.uio_resid;
+	dataset_kstats_update_read_kstats(&zv->zv_kstat, nread);
+	task_io_account_read(nread);
+	rw_exit(&zv->zv_suspend_lock);
+	kiocb->ki_pos += nread;
+	return (nread);
+}
+
+/*
+ * TODO: Move common path for zvol_cdev_write and zvol_write
+ * in a separate function
+ */
+static ssize_t zvol_cdev_write(struct kiocb *kiocb, struct iov_iter *from)
+{
+	struct file *filp = kiocb->ki_filp;
+	struct inode *ip = filp->f_mapping->host;
+	zfs_uio_t uio;
+	size_t count = 0;
+	ssize_t ret;
+	struct zvol_state_os *zvos = container_of(ip->i_cdev,
+	    struct zvol_state_os, zvo_cdev);
+	zvol_state_t *zv = zvos->zv;
+	int error = 0;
+
+	ret = zpl_generic_write_checks(kiocb, from, &count);
+	if (ret)
+		return (ret);
+
+	zpl_uio_init(&uio, kiocb, from, kiocb->ki_pos, count, from->iov_offset);
+
+	ASSERT3P(zv, !=, NULL);
+	ASSERT3U(zv->zv_open_count, >, 0);
+	ASSERT3P(zv->zv_zilog, !=, NULL);
+
+	ssize_t start_resid = uio.uio_resid;
+
+	boolean_t sync = zv->zv_objset->os_sync == ZFS_SYNC_ALWAYS;
+
+	rw_enter(&zv->zv_suspend_lock, RW_READER);
+
+	/*
+	 * TODO: Should be moved in a separate function like we have
+	 * zvol_ensure_zilog in FreeBSD.
+	 */
+	if (zv->zv_zilog == NULL) {
+		rw_exit(&zv->zv_suspend_lock);
+		rw_enter(&zv->zv_suspend_lock, RW_WRITER);
+		if (zv->zv_zilog == NULL) {
+			zv->zv_zilog = zil_open(zv->zv_objset,
+			    zvol_get_data, &zv->zv_kstat.dk_zil_sums);
+			zv->zv_flags |= ZVOL_WRITTEN_TO;
+			/* replay / destroy done in zvol_create_minor */
+			VERIFY0((zv->zv_zilog->zl_header->zh_flags &
+			    ZIL_REPLAY_NEEDED));
+		}
+		rw_downgrade(&zv->zv_suspend_lock);
+	}
+
+	zfs_locked_range_t *lr = zfs_rangelock_enter(&zv->zv_rangelock,
+	    uio.uio_loffset, uio.uio_resid, RL_WRITER);
+
+	uint64_t volsize = zv->zv_volsize;
+	while (uio.uio_resid > 0 && uio.uio_loffset < volsize) {
+		uint64_t bytes = MIN(uio.uio_resid, DMU_MAX_ACCESS >> 1);
+		uint64_t off = uio.uio_loffset;
+		dmu_tx_t *tx = dmu_tx_create(zv->zv_objset);
+
+		if (bytes > volsize - off)	/* don't write past the end */
+			bytes = volsize - off;
+
+		dmu_tx_hold_write_by_dnode(tx, zv->zv_dn, off, bytes);
+
+		/* This will only fail for ENOSPC */
+		error = dmu_tx_assign(tx, TXG_WAIT);
+		if (error) {
+			dmu_tx_abort(tx);
+			break;
+		}
+		error = dmu_write_uio_dnode(zv->zv_dn, &uio, bytes, tx);
+		if (error == 0) {
+			zvol_log_write(zv, tx, off, bytes, sync);
+		}
+		dmu_tx_commit(tx);
+
+		if (error)
+			break;
+	}
+	zfs_rangelock_exit(lr);
+
+	int64_t nwritten = start_resid - uio.uio_resid;
+	dataset_kstats_update_write_kstats(&zv->zv_kstat, nwritten);
+	task_io_account_write(nwritten);
+
+	if (sync)
+		zil_commit(zv->zv_zilog, ZVOL_OBJ);
+
+	rw_exit(&zv->zv_suspend_lock);
+
+	kiocb->ki_pos += nwritten;
+
+	return (nwritten);
+}
+
+/*
+ * TODO: Check what ioctls would be needed by iSCSI target but that linux
+ * SCST that is used in scale does not seem to have support for char devices
+ */
+static long zvol_cdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
+{
+	return (0);
+}
+
+/*
+ * TODO: Check if iSCSI target would need it
+ */
+static int zvol_cdev_fsync(struct file *filp, loff_t start, loff_t end,
+		int datasync)
+{
+	return (0);
+}
+
+/*
+ * TODO: Check if more function pointers are
+ */
+const struct file_operations zvol_cdev_fops = {
+	.open = zvol_cdev_open,
+	.release = zvol_cdev_release,
+	.read_iter = zvol_cdev_read,
+	.write_iter = zvol_cdev_write,
+	.unlocked_ioctl = zvol_cdev_ioctl,
+	.fsync = zvol_cdev_fsync,
+	.llseek = noop_llseek,
+};
+
 static int
 zvol_alloc_non_blk_mq(struct zvol_state_os *zso)
 {
@@ -1104,12 +1472,14 @@ zvol_alloc_blk_mq(zvol_state_t *zv)
  * request queue and generic disk structures for the block device.
  */
 static zvol_state_t *
-zvol_alloc(dev_t dev, const char *name)
+zvol_alloc(unsigned minor, const char *name)
 {
 	zvol_state_t *zv;
 	struct zvol_state_os *zso;
 	uint64_t volmode;
 	int ret;
+	dev_t dev_blk = MKDEV(zvol_major, minor);
+	dev_t dev_chr = MKDEV(ZVOL_CDEV_MAJOR, minor);
 
 	if (dsl_prop_get_integer(name, "volmode", &volmode, NULL) != 0)
 		return (NULL);
@@ -1124,6 +1494,7 @@ zvol_alloc(dev_t dev, const char *name)
 	zso = kmem_zalloc(sizeof (struct zvol_state_os), KM_SLEEP);
 	zv->zv_zso = zso;
 	zv->zv_volmode = volmode;
+	zso->zv = zv;
 
 	list_link_init(&zv->zv_next);
 	mutex_init(&zv->zv_state_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -1171,7 +1542,8 @@ zvol_alloc(dev_t dev, const char *name)
 	blk_queue_flag_set(QUEUE_FLAG_IO_STAT, zso->zvo_queue);
 
 	zso->zvo_queue->queuedata = zv;
-	zso->zvo_dev = dev;
+	zso->zvo_dev = dev_blk;
+	zso->zvo_cdev_id = dev_chr;
 	zv->zv_open_count = 0;
 	strlcpy(zv->zv_name, name, MAXNAMELEN);
 
@@ -1187,15 +1559,35 @@ zvol_alloc(dev_t dev, const char *name)
 	 * device to one and explicitly disabling partition scanning.
 	 */
 	if (volmode == ZFS_VOLMODE_DEV) {
+		char cdev_name[DISK_NAME_LEN];
 		zso->zvo_disk->minors = 1;
 		zso->zvo_disk->flags &= ~ZFS_GENHD_FL_EXT_DEVT;
 		zso->zvo_disk->flags |= ZFS_GENHD_FL_NO_PART;
+		snprintf(cdev_name, DISK_NAME_LEN, "%s%d", ZVOL_CDEV_NAME,
+		    minor);
+		/*
+		 * TODO: Error Handling
+		 */
+		register_chrdev_region(dev_chr, 1, cdev_name);
+		cdev_init(&zso->zvo_cdev, &zvol_cdev_fops);
+		zso->zvo_cdev.owner = THIS_MODULE;
+		/*
+		 * TODO: Make the device online later
+		 */
+		cdev_add(&zso->zvo_cdev, dev_chr, 1);
+/*
+ * TODO: GPL License issue.
+ * Currently manually creating device file at /dev/zc*
+ */
+#if 0
+		device_create(zvol_cdev_cls, NULL, dev_chr, NULL, cdev_name);
+#endif
 	}
 
-	zso->zvo_disk->first_minor = (dev & MINORMASK);
+	zso->zvo_disk->first_minor = (dev_blk & MINORMASK);
 	zso->zvo_disk->private_data = zv;
 	snprintf(zso->zvo_disk->disk_name, DISK_NAME_LEN, "%s%d",
-	    ZVOL_DEV_NAME, (dev & MINORMASK));
+	    ZVOL_DEV_NAME, (dev_blk & MINORMASK));
 
 	return (zv);
 
@@ -1228,6 +1620,17 @@ zvol_os_free(zvol_state_t *zv)
 	rw_destroy(&zv->zv_suspend_lock);
 	zfs_rangelock_fini(&zv->zv_rangelock);
 
+	if (zv->zv_volmode == ZFS_VOLMODE_DEV) {
+/*
+ * TODO: GPL License issue.
+ * Currently manually creating device file at /dev/zc*
+ */
+#if 0
+		device_destroy(zvol_cdev_cls, zv->zv_zso->zvo_cdev_id);
+#endif
+		cdev_del(&zv->zv_zso->zvo_cdev);
+		unregister_chrdev_region(zv->zv_zso->zvo_cdev_id, 1);
+	}
 	del_gendisk(zv->zv_zso->zvo_disk);
 #if defined(HAVE_SUBMIT_BIO_IN_BLOCK_DEVICE_OPERATIONS) && \
 	defined(HAVE_BLK_ALLOC_DISK)
@@ -1310,7 +1713,7 @@ zvol_os_create_minor(const char *name)
 	if (error)
 		goto out_dmu_objset_disown;
 
-	zv = zvol_alloc(MKDEV(zvol_major, minor), name);
+	zv = zvol_alloc(minor, name);
 	if (zv == NULL) {
 		error = SET_ERROR(EAGAIN);
 		goto out_dmu_objset_disown;
@@ -1565,12 +1968,32 @@ zvol_init(void)
 
 	zvol_init_impl();
 	ida_init(&zvol_ida);
+/*
+ * TODO: GPL License issue.
+ * Currently manually creating device file at /dev/zc*
+ */
+#if 0
+	zvol_cdev_cls = class_create(THIS_MODULE, "zvol_cdevs_cls");
+	if (IS_ERR(zvol_cdev_cls)) {
+		printk(KERN_INFO "%s(): Unable to create zvol cdev class:"
+		    "%ld\n", __func__, PTR_ERR(zvol_cdev_cls));
+		zvol_cdev_cls = NULL;
+	}
+#endif
 	return (0);
 }
 
 void
 zvol_fini(void)
 {
+/*
+ * TODO: GPL License issue.
+ * Currently manually creating device file at /dev/zc*
+ */
+#if 0
+	if (zvol_cdev_cls)
+		class_destroy(zvol_cdev_cls);
+#endif
 	zvol_fini_impl();
 	unregister_blkdev(zvol_major, ZVOL_DRIVER);
 	taskq_destroy(zvol_taskq);
