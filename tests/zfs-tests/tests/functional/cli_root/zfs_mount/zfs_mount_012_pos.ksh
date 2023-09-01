@@ -43,7 +43,7 @@ fs=$TESTPOOL/$TESTFS
 log_must zfs umount $fs
 log_must mkdir -p $TESTDIR
 log_must zfs set mountpoint=$TESTDIR $fs
-log_must zfs mount $fs
+log_must ismounted $fs
 log_must zfs umount $fs
 log_must touch $TESTDIR/testfile.$$
 log_must zfs mount $fs

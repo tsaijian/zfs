@@ -62,10 +62,12 @@ longpath=$(gen_dataset_name 1030 "abcdefg")
 log_must zfs create -o mountpoint=legacy $TESTPOOL/foo
 
 # Do the negative testing about "property may be set but unable to remount filesystem"
-log_mustnot eval "zfs set mountpoint=$badpath $TESTPOOL/foo >/dev/null 2>&1"
+set_n_check_prop "$badpath" "mountpoint" "$TESTPOOL/foo"
+log_mustnot ismounted $TESTPOOL/foo
 
 # Do the negative testing about "property may be set but unable to reshare filesystem"
-log_mustnot eval "zfs set sharenfs=on $TESTPOOL/foo >/dev/null 2>&1"
+set_n_check_prop "on" "sharenfs" "$TESTPOOL/foo"
+log_mustnot ismounted $TESTPOOL/foo
 
 # Do the negative testing about "sharenfs property can not be set to null"
 log_mustnot eval "zfs set sharenfs= $TESTPOOL/foo >/dev/null 2>&1"
