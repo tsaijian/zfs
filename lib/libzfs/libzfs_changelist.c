@@ -138,6 +138,8 @@ changelist_prefix(prop_changelist_t *clp)
 				}
 				break;
 			case ZFS_PROP_SHARESMB:
+				if (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT)
+					break;
 				(void) zfs_unshare(cn->cn_handle, NULL,
 				    smb);
 				commit_smb_shares = B_TRUE;
@@ -164,9 +166,8 @@ changelist_prefix(prop_changelist_t *clp)
  * reshare the filesystems as necessary.  In changelist_gather() we recorded
  * whether the filesystem was previously shared or mounted.  The action we take
  * depends on the previous state, and whether the value was previously 'legacy'.
- * For non-legacy properties, we only remount/reshare the filesystem if it was
- * previously mounted/shared.  Otherwise, we always remount/reshare the
- * filesystem.
+ * For non-legacy properties, we always remount/reshare the filesystem,
+ * if CL_GATHER_DONT_UNMOUNT is not set.
  */
 int
 changelist_postfix(prop_changelist_t *clp)
@@ -205,6 +206,7 @@ changelist_postfix(prop_changelist_t *clp)
 		boolean_t sharenfs;
 		boolean_t sharesmb;
 		boolean_t mounted;
+		boolean_t nounmount;
 		boolean_t needs_key;
 
 		/*
@@ -239,10 +241,11 @@ changelist_postfix(prop_changelist_t *clp)
 		needs_key = (zfs_prop_get_int(cn->cn_handle,
 		    ZFS_PROP_KEYSTATUS) == ZFS_KEYSTATUS_UNAVAILABLE);
 
-		mounted = (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT) ||
-		    zfs_is_mounted(cn->cn_handle, NULL);
+		mounted = zfs_is_mounted(cn->cn_handle, NULL);
 
-		if (!mounted && !needs_key && (cn->cn_mounted ||
+		nounmount = (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT) != 0;
+
+		if (!mounted && !nounmount && !needs_key && (cn->cn_mounted ||
 		    (((clp->cl_prop == ZFS_PROP_MOUNTPOINT &&
 		    clp->cl_prop == clp->cl_realprop) ||
 		    sharenfs || sharesmb || clp->cl_waslegacy) &&
@@ -260,19 +263,19 @@ changelist_postfix(prop_changelist_t *clp)
 		 */
 		const enum sa_protocol nfs[] =
 		    {SA_PROTOCOL_NFS, SA_NO_PROTOCOL};
-		if (sharenfs && mounted) {
+		if (sharenfs && mounted && !nounmount) {
 			zfs_share(cn->cn_handle, nfs);
 			commit_nfs_shares = B_TRUE;
-		} else if (cn->cn_shared || clp->cl_waslegacy) {
+		} else if ((cn->cn_shared || clp->cl_waslegacy) && !nounmount) {
 			zfs_unshare(cn->cn_handle, NULL, nfs);
 			commit_nfs_shares = B_TRUE;
 		}
 		const enum sa_protocol smb[] =
 		    {SA_PROTOCOL_SMB, SA_NO_PROTOCOL};
-		if (sharesmb && mounted) {
+		if (sharesmb && mounted && !nounmount) {
 			zfs_share(cn->cn_handle, smb);
 			commit_smb_shares = B_TRUE;
-		} else if (cn->cn_shared || clp->cl_waslegacy) {
+		} else if ((cn->cn_shared || clp->cl_waslegacy) && !nounmount) {
 			zfs_unshare(cn->cn_handle, NULL, smb);
 			commit_smb_shares = B_TRUE;
 		}

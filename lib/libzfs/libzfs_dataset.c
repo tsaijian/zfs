@@ -1764,7 +1764,7 @@ zfs_prop_set(zfs_handle_t *zhp, const char *propname, const char *propval)
 		goto error;
 	}
 
-	ret = zfs_prop_set_list(zhp, nvl);
+	ret = zfs_prop_set_list(zhp, nvl, 0);
 
 error:
 	nvlist_free(nvl);
@@ -1778,7 +1778,7 @@ error:
  * given dataset.
  */
 int
-zfs_prop_set_list(zfs_handle_t *zhp, nvlist_t *props)
+zfs_prop_set_list(zfs_handle_t *zhp, nvlist_t *props, int flags)
 {
 	zfs_cmd_t zc = {"\0"};
 	int ret = -1;
@@ -1848,7 +1848,9 @@ zfs_prop_set_list(zfs_handle_t *zhp, nvlist_t *props)
 		if (prop != ZFS_PROP_CANMOUNT ||
 		    (fnvpair_value_uint64(elem) == ZFS_CANMOUNT_OFF &&
 		    zfs_is_mounted(zhp, NULL))) {
-			cls[cl_idx] = changelist_gather(zhp, prop, 0, 0);
+			cls[cl_idx] = changelist_gather(zhp, prop,
+			    ((flags & ZFS_SET_NOMOUNT) ?
+			    CL_GATHER_DONT_UNMOUNT : 0), 0);
 			if (cls[cl_idx] == NULL)
 				goto error;
 		}
