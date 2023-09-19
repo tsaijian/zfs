@@ -105,6 +105,14 @@ changelist_prefix(prop_changelist_t *clp)
 	    clp->cl_prop != ZFS_PROP_SHARESMB)
 		return (0);
 
+	/*
+	 * If CL_GATHER_DONT_UNMOUNT is set, don't want to unmount/unshare and
+	 * later (re)mount/(re)share the filesystem in postfix phase, so we return
+	 * from here. If filesystem is mounted or unmounted, leave it as it is.
+	 */
+	if (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT)
+		return (0);
+
 	if ((walk = uu_avl_walk_start(clp->cl_tree, UU_WALK_ROBUST)) == NULL)
 		return (-1);
 
@@ -129,8 +137,6 @@ changelist_prefix(prop_changelist_t *clp)
 			 */
 			switch (clp->cl_prop) {
 			case ZFS_PROP_MOUNTPOINT:
-				if (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT)
-					break;
 				if (zfs_unmount(cn->cn_handle, NULL,
 				    clp->cl_mflags) != 0) {
 					ret = -1;
@@ -138,8 +144,6 @@ changelist_prefix(prop_changelist_t *clp)
 				}
 				break;
 			case ZFS_PROP_SHARESMB:
-				if (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT)
-					break;
 				(void) zfs_unshare(cn->cn_handle, NULL,
 				    smb);
 				commit_smb_shares = B_TRUE;
@@ -179,6 +183,14 @@ changelist_postfix(prop_changelist_t *clp)
 	boolean_t commit_nfs_shares = B_FALSE;
 
 	/*
+	 * If CL_GATHER_DONT_UNMOUNT is set, it means we don't want to (un)mount
+	 * or (re/un)share the filesystem, so we return from here. If filesystem
+	 * is mounted or unmounted, leave it as it is.
+	 */
+	if (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT)
+		return (0);
+
+	/*
 	 * If we're changing the mountpoint, attempt to destroy the underlying
 	 * mountpoint.  All other datasets will have inherited from this dataset
 	 * (in which case their mountpoints exist in the filesystem in the new
@@ -206,7 +218,6 @@ changelist_postfix(prop_changelist_t *clp)
 		boolean_t sharenfs;
 		boolean_t sharesmb;
 		boolean_t mounted;
-		boolean_t nounmount;
 		boolean_t needs_key;
 
 		/*
@@ -243,9 +254,7 @@ changelist_postfix(prop_changelist_t *clp)
 
 		mounted = zfs_is_mounted(cn->cn_handle, NULL);
 
-		nounmount = (clp->cl_gflags & CL_GATHER_DONT_UNMOUNT) != 0;
-
-		if (!mounted && !nounmount && !needs_key && (cn->cn_mounted ||
+		if (!mounted && !needs_key && (cn->cn_mounted ||
 		    (((clp->cl_prop == ZFS_PROP_MOUNTPOINT &&
 		    clp->cl_prop == clp->cl_realprop) ||
 		    sharenfs || sharesmb || clp->cl_waslegacy) &&
@@ -263,19 +272,19 @@ changelist_postfix(prop_changelist_t *clp)
 		 */
 		const enum sa_protocol nfs[] =
 		    {SA_PROTOCOL_NFS, SA_NO_PROTOCOL};
-		if (sharenfs && mounted && !nounmount) {
+		if (sharenfs && mounted) {
 			zfs_share(cn->cn_handle, nfs);
 			commit_nfs_shares = B_TRUE;
-		} else if ((cn->cn_shared || clp->cl_waslegacy) && !nounmount) {
+		} else if ((cn->cn_shared || clp->cl_waslegacy)) {
 			zfs_unshare(cn->cn_handle, NULL, nfs);
 			commit_nfs_shares = B_TRUE;
 		}
 		const enum sa_protocol smb[] =
 		    {SA_PROTOCOL_SMB, SA_NO_PROTOCOL};
-		if (sharesmb && mounted && !nounmount) {
+		if (sharesmb && mounted) {
 			zfs_share(cn->cn_handle, smb);
 			commit_smb_shares = B_TRUE;
-		} else if ((cn->cn_shared || clp->cl_waslegacy) && !nounmount) {
+		} else if ((cn->cn_shared || clp->cl_waslegacy)) {
 			zfs_unshare(cn->cn_handle, NULL, smb);
 			commit_smb_shares = B_TRUE;
 		}
