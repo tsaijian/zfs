@@ -2522,6 +2522,9 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 	case ZFS_PROP_VOLSIZE:
 		err = zvol_set_volsize(dsname, intval);
 		break;
+	case ZFS_PROP_VOLTHREADING:
+		err = zvol_set_volthreading(dsname, intval);
+		break;
 	case ZFS_PROP_SNAPDEV:
 		err = zvol_set_common(dsname, source, intval, ZFS_PROP_SNAPDEV);
 		break;
