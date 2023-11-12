@@ -518,9 +518,22 @@ zvol_request_impl(zvol_state_t *zv, struct bio *bio, struct request *rq,
 	uint64_t offset = io_offset(bio, rq);
 	uint64_t size = io_size(bio, rq);
 	int rw = io_data_dir(bio, rq);
+	int is_sync_io = io_is_sync(bio, rq);
+	int is_idle_io = io_is_idle(bio, rq);
 
-	if (zvol_request_sync)
+	/*
+	 * For Direct IO Writes, the block layer sets both the REQ_IDLE
+	 * and REQ_SYNC flags (see dio_bio_write_op). For Direct IO
+	 * Reads (up to 1MB IO size), REQ_SYNC is set by
+	 * submit_bio_wait(). In both cases, since the caller already
+	 * waits for the bio to complete, we should force these
+	 * operations to be synchronous to avoid additional threading
+	 * overhead.
+	 */
+	if (zvol_request_sync || (rw == READ && is_sync_io) ||
+	    (rw == WRITE && is_sync_io && is_idle_io)) {
 		force_sync = 1;
+	}
 
 	zv_request_t zvr = {
 		.zv = zv,

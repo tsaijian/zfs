@@ -502,6 +502,39 @@ bio_is_fua(struct bio *bio)
 
 /*
  * 4.8 API,
+ *   REQ_SYNC flag moved to bio->bi_opf
+ *
+ * 2.6.x - 4.7 API,
+ *   REQ_SYNC
+ */
+static inline boolean_t
+bio_is_sync(struct bio *bio)
+{
+#if defined(HAVE_BIO_BI_OPF)
+	return (!!(bio->bi_opf & REQ_SYNC));
+#elif defined(REQ_SYNC)
+	return (!!(bio->bi_rw & REQ_SYNC));
+#else
+#error	"Allowing the build will cause sync requests to be ignored."
+#endif
+}
+
+/*
+ * 4.10 API,
+ *   REQ_IDLE flag replaced by REQ_NOIDLE
+ */
+static inline boolean_t
+bio_is_idle(struct bio *bio)
+{
+#if defined(HAVE_BIO_BI_OPF) && defined(REQ_IDLE)
+	return (!!(bio->bi_opf & REQ_IDLE));
+#else
+	return (0);
+#endif
+}
+
+/*
+ * 4.8 API,
  *   REQ_OP_DISCARD
  *
  * 2.6.36 - 4.7 API,
@@ -777,5 +810,29 @@ io_has_data(struct bio *bio, struct request *rq)
 	ASSERT3P(rq, ==, NULL);
 #endif
 	return (bio_has_data(bio));
+}
+
+static inline int
+io_is_sync(struct bio *bio, struct request *rq)
+{
+#ifdef HAVE_BLK_MQ
+	if (rq != NULL)
+		return (!!(rq->cmd_flags & REQ_SYNC));
+#else
+	ASSERT3P(rq, ==, NULL);
+#endif
+	return (bio_is_sync(bio));
+}
+
+static inline int
+io_is_idle(struct bio *bio, struct request *rq)
+{
+#ifdef HAVE_BLK_MQ
+	if (rq != NULL)
+		return (!!(rq->cmd_flags & REQ_IDLE));
+#else
+	ASSERT3P(rq, ==, NULL);
+#endif
+	return (bio_is_idle(bio));
 }
 #endif /* _ZFS_BLKDEV_H */
