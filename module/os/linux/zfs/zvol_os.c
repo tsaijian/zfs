@@ -56,6 +56,7 @@ static unsigned long zvol_max_discard_blocks = 16384;
 /* 1>>26 = 64M offset */
 static unsigned int zvol_taskq_offset_shift = 26;
 static unsigned int zvol_use_single_taskq = 0;
+static unsigned int zvol_odirect_test = 0;
 
 #ifndef HAVE_BLKDEV_GET_ERESTARTSYS
 static unsigned int zvol_open_timeout_ms = 1000;
@@ -530,8 +531,9 @@ zvol_request_impl(zvol_state_t *zv, struct bio *bio, struct request *rq,
 	 * operations to be synchronous to avoid additional threading
 	 * overhead.
 	 */
-	if (zvol_request_sync || (rw == READ && is_sync_io) ||
-	    (rw == WRITE && is_sync_io && is_idle_io)) {
+	if (zvol_request_sync || (zvol_odirect_test == 1 && ((rw == READ
+	    && is_sync_io) ||
+	    (rw == WRITE && is_sync_io && is_idle_io)))) {
 		force_sync = 1;
 	}
 
@@ -1693,6 +1695,9 @@ MODULE_PARM_DESC(zvol_threads, "Number of threads to handle I/O requests. Set"
 
 module_param(zvol_use_single_taskq, uint, 0444);
 MODULE_PARM_DESC(zvol_use_single_taskq, "Debugging Purpose: Single taskq");
+
+module_param(zvol_odirect_test, uint, 0644);
+MODULE_PARM_DESC(zvol_odirect_test, "Debugging Purpose: Check o_direct");
 
 module_param(zvol_request_sync, uint, 0644);
 MODULE_PARM_DESC(zvol_request_sync, "Synchronously handle bio requests");
