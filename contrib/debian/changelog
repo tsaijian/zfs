@@ -1,3 +1,9 @@
+openzfs-linux (2.2.1-0) unstable; urgency=medium
+
+  * Merge tag zfs-2.2.1
+
+ -- Ameer Hamza <ahamza@ixsystems.com>  Mon, 21 Nov 2023 10:00:00 -0500
+
 openzfs-linux (2.2.0-0) unstable; urgency=medium
 
   * Merge tag zfs-2.2.0
