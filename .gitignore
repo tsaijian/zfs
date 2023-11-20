@@ -85,7 +85,6 @@ Makefile
 Makefile.in
 nfs41acl.h
 nfs41acl_xdr.c
-changelog
 *.patch
 *.orig
 *.tmp
